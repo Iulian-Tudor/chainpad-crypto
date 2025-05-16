@@ -4,7 +4,10 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="38318e43-d8f0-4863-b429-32804725cc82" name="Changes" comment="" />
+    <list default="true" id="38318e43-d8f0-4863-b429-32804725cc82" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/crypto.js" beforeDir="false" afterPath="$PROJECT_DIR$/crypto.js" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -25,6 +28,9 @@
     &quot;accountId&quot;: &quot;ccbfb575-ad22-4977-a8c8-a9d8562888ae&quot;
   }
 }</component>
+  <component name="HighlightingSettingsPerFile">
+    <setting file="file://$PROJECT_DIR$/crypto.js" root0="FORCE_HIGHLIGHTING" />
+  </component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 4
 }</component>
@@ -69,7 +75,8 @@
       <workItem from="1747226760639" duration="547000" />
       <workItem from="1747230245198" duration="263000" />
       <workItem from="1747230518819" duration="905000" />
-      <workItem from="1747292977819" duration="3287000" />
+      <workItem from="1747292977819" duration="13427000" />
+      <workItem from="1747383580017" duration="1807000" />
     </task>
     <servers />
   </component>
