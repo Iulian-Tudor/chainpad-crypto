@@ -35,60 +35,76 @@
         // Random generation namespace
         var Random = Crypto.Random = {};
 
-        // Create a random channel id (formely from common-hash.js)
-        Random.createChannelId = function (ephemeral) {
-            var id = encodeHex(Nacl.randomBytes(ephemeral? 17: 16));
-            if ([32, 34].indexOf(id.length) === -1 || /[^a-f0-9]/.test(id)) {
-                throw new Error('channel ids must consist of 32 hex characters');
-            }
-            return id;
-        };
+        Random.decodeBase64 = decodeBase64;
+        Random.encodeBase64 = encodeBase64;
 
-        // Generate a random sign key pair (formely from common-hash.js)
-        Random.generateSignPair = function () {
-            var ed = Nacl.sign.keyPair();
-            var makeSafe = function (key) {
-                return Crypto.b64RemoveSlashes(key).replace(/=+$/g, '');
-            };
-            return {
-                validateKey: encodeBase64(ed.publicKey),
-                signKey: encodeBase64(ed.secretKey),
-                safeValidateKey: makeSafe(encodeBase64(ed.publicKey)),
-                safeSignKey: makeSafe(encodeBase64(ed.secretKey)),
-            };
-        };
+        Random.decodeUTF8 = decodeUTF8;
+        Random.encodeUTF8 = encodeUTF8;
 
-        // Generate a sign key pair from seed
         Random.signKeyPairFromSeed = function(seed) {
             return Nacl.sign.keyPair.fromSeed(seed);
         };
 
-        // Generate a sign key pair from secret key
         Random.signKeyPairFromSecretKey = function(secretKey) {
             return Nacl.sign.keyPair.fromSecretKey(secretKey);
         };
 
-        // Generate a curve key pair
+        Random.signKeyPair = function() {
+            return Nacl.sign.keyPair();
+        };
+
+        Random.signDetached = function(message, secretKey) {
+            return Nacl.sign.detached(message, secretKey);
+        }
+
+        Random.verifyDetached = function(signature, message, publicKey) {
+            return Nacl.sign.detached.verify(message, signature, publicKey);
+        }
+
         Random.curveKeyPair = function() {
             return Nacl.box.keyPair();
         };
 
-        // Generate a curve key pair from secret key
-        Random.curveKeyPairFromSecretKey = function(secretKey) {
+        Random.box = function(message, nonce, theirPublicKey, mySecretKey) {
+            return Nacl.box(message, nonce, theirPublicKey, mySecretKey);
+        };
+
+        Random.boxOpen = function(ciphertext, nonce, theirPublicKey, mySecretKey) {
+            return Nacl.box.open(ciphertext, nonce, theirPublicKey, mySecretKey);
+        }
+
+        Random.boxKeyPairFromSecretKey = function(secretKey) {
             return Nacl.box.keyPair.fromSecretKey(secretKey);
         };
 
-        // Create a random hash
+        Random.secretbox = function(message, nonce, key) {
+            return Nacl.secretbox(message, nonce, key);
+        }
+
+        Random.secretboxOpen = function(ciphertext, nonce, key) {
+            return Nacl.secretbox.open(ciphertext, nonce, key);
+        };
+
         Random.createHash = function(data) {
             return Nacl.hash(data);
         };
 
-        // Generate random bytes
         Random.bytes = function(length) {
             return Nacl.randomBytes(length);
         };
 
-        // Create a random nonce
+        Random.boxNonceLength = function() {
+            return Nacl.box.nonceLength;
+        }
+
+        Random.signSeedLength = function() {
+            return Nacl.sign.seedLength;
+        }
+
+        Random.boxKeyLength = function() {
+            return Nacl.box.publicKeyLength;
+        }
+
         Random.nonce = function() {
             return Nacl.randomBytes(24);
         };
@@ -145,23 +161,6 @@
             return result;
         };
 
-        /*
-        // Create random hash for different types of content (from common-hash.js)
-        Random.createRandomHash = function (type, password) {
-            var cryptor;
-            if (type === 'file') {
-                cryptor = Crypto.createFileCryptor2(void 0, password);
-                return '/2/' + type + '/' + Crypto.b64RemoveSlashes(cryptor.fileKeyStr) + '/' + (password ? 'p/' : '');
-            }
-            cryptor = Crypto.createEditCryptor2(void 0, void 0, password);
-            return '/2/' + type + '/edit/' + Crypto.b64RemoveSlashes(cryptor.editKeyStr) + '/' + (password ? 'p/' : '');
-        };
-
-        // Generate random bytes with a specified length (utility function)
-        Random.bytes = function(length) {
-            return Nacl.randomBytes(length);
-        };
-        */
 
         // Box encryption and decryption abstraction
         var Box = Crypto.Box = {};
