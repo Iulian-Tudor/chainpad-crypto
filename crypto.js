@@ -53,6 +53,10 @@
             return Nacl.sign.keyPair();
         };
 
+        Random.signOpen = function(signedMessage, publicKey) {
+            return Nacl.sign.open(signedMessage, publicKey);
+        }
+
         Random.signDetached = function(message, secretKey) {
             return Nacl.sign.detached(message, secretKey);
         }
@@ -105,61 +109,13 @@
             return Nacl.box.publicKeyLength;
         }
 
-        Random.nonce = function() {
-            return Nacl.randomBytes(24);
-        };
+        Random.secretboxKeyLength = function() {
+            return Nacl.secretbox.keyLength;
+        }
 
-        // Allocate bytes for user credentials (from common-login.js)
-        Random.allocateBytes = function (bytes, dispenser) {
-            var result = {};
-
-            if (!dispenser) {
-                dispenser = function (bytes) {
-                    var buff = [];
-                    for (var i = 0; i < bytes; i++) {
-                        buff.push(Random.bytes(1)[0]);
-                    }
-                    return buff;
-                };
-            }
-
-            // dispense 18 bytes of entropy for your encryption key
-            var encryptionSeed = dispenser(18);
-            // 16 bytes for a deterministic channel key
-            var channelSeed = dispenser(16);
-            // 32 bytes for a curve key
-            var curveSeed = dispenser(32);
-
-            var curvePair = Random.curveKeyPairFromSecretKey(new Uint8Array(curveSeed));
-            result.curvePrivate = encodeBase64(curvePair.secretKey);
-            result.curvePublic = encodeBase64(curvePair.publicKey);
-
-            // 32 more for a signing key
-            var edSeed = result.edSeed = dispenser(32);
-
-            // 64 more bytes to seed an additional signing key
-            var blockKeyBytes = dispenser(64);
-            result.blockKeyBytes = blockKeyBytes;
-
-            // derive a private key from the ed seed
-            var signingKeypair = Random.signKeyPairFromSeed(new Uint8Array(edSeed));
-
-            result.edPrivate = encodeBase64(signingKeypair.secretKey);
-            result.edPublic = encodeBase64(signingKeypair.publicKey);
-
-            var keys = result.keys = Crypto.createEditCryptor(null, encryptionSeed);
-
-            // 24 bytes of base64
-            keys.editKeyStr = keys.editKeyStr.replace(/\//g, '-');
-
-            // 32 bytes of hex
-            var channelHex = result.channelHex = encodeHex(channelSeed);
-
-            // should never happen
-            if (channelHex.length !== 32) { throw new Error('invalid channel id'); }
-
-            return result;
-        };
+        Random.signKeyLength = function() {
+            return Nacl.sign.publicKeyLength;
+        }
 
 
         // Box encryption and decryption abstraction
