@@ -5,6 +5,9 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="38318e43-d8f0-4863-b429-32804725cc82" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/inspectionProfiles/Project_Default.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/jsLinters/jshint.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/jsLinters/jshint.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/crypto.js" beforeDir="false" afterPath="$PROJECT_DIR$/crypto.js" afterDir="false" />
     </list>
@@ -53,7 +56,7 @@
     &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
     &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
     &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
-    &quot;settings.editor.selected.configurable&quot;: &quot;Errors&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;Settings.JavaScript.Linters.JSHint&quot;,
     &quot;ts.external.directory.path&quot;: &quot;C:\\Users\\ITScutaru\\AppData\\Local\\Programs\\WebStorm\\plugins\\javascript-plugin\\jsLanguageServicesImpl\\external&quot;,
     &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   }
@@ -83,7 +86,14 @@
       <workItem from="1747728196195" duration="1526000" />
       <workItem from="1747810924098" duration="14577000" />
       <workItem from="1747913006326" duration="595000" />
-      <workItem from="1747914860555" duration="606000" />
+      <workItem from="1747914860555" duration="722000" />
+      <workItem from="1747985954581" duration="1485000" />
+      <workItem from="1747987475639" duration="5769000" />
+      <workItem from="1748104381971" duration="41000" />
+      <workItem from="1748113255633" duration="1357000" />
+      <workItem from="1748243247173" duration="2071000" />
+      <workItem from="1748245349552" duration="4205000" />
+      <workItem from="1748329516803" duration="2146000" />
     </task>
     <servers />
   </component>

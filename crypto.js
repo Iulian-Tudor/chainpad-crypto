@@ -53,6 +53,10 @@
             return Nacl.sign.keyPair();
         };
 
+        Random.sign = function(message, secretKey) {
+            return Nacl.sign(message, secretKey);
+        }
+
         Random.signOpen = function(signedMessage, publicKey) {
             return Nacl.sign.open(signedMessage, publicKey);
         }
@@ -111,6 +115,10 @@
 
         Random.secretboxKeyLength = function() {
             return Nacl.secretbox.keyLength;
+        }
+
+        Random.secretboxNonceLength = function() {
+            return Nacl.secretbox.nonceLength;
         }
 
         Random.signKeyLength = function() {
@@ -185,7 +193,7 @@
 
         var encryptStr = function (str, key) {
             var array = decodeUTF8(str);
-            var nonce = Random.nonce();
+            var nonce = Random.bytes(24);
             var packed = SecretBox.encrypt(array, nonce, key);
             if (!packed) { throw new Error(); }
             return encodeBase64(nonce) + "|" + encodeBase64(packed);
