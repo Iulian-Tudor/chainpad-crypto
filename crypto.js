@@ -35,101 +35,166 @@
         // Random generation namespace
         var Random = Crypto.Random = {};
 
-        // Create a random channel id (formely from common-hash.js)
-        Random.createChannelId = function (ephemeral) {
-            var id = encodeHex(Nacl.randomBytes(ephemeral? 17: 16));
-            if ([32, 34].indexOf(id.length) === -1 || /[^a-f0-9]/.test(id)) {
-                throw new Error('channel ids must consist of 32 hex characters');
-            }
-            return id;
+        Random.decodeBase64 = decodeBase64;
+        Random.encodeBase64 = encodeBase64;
+
+        Random.decodeUTF8 = decodeUTF8;
+        Random.encodeUTF8 = encodeUTF8;
+
+        Random.signKeyPairFromSeed = function(seed) {
+            return Nacl.sign.keyPair.fromSeed(seed);
         };
 
-        // Generate a random sign key pair (formely from common-hash.js)
-        Random.generateSignPair = function () {
-            var ed = Nacl.sign.keyPair();
-            var makeSafe = function (key) {
-                return Crypto.b64RemoveSlashes(key).replace(/=+$/g, '');
-            };
-            return {
-                validateKey: encodeBase64(ed.publicKey),
-                signKey: encodeBase64(ed.secretKey),
-                safeValidateKey: makeSafe(encodeBase64(ed.publicKey)),
-                safeSignKey: makeSafe(encodeBase64(ed.secretKey)),
-            };
+        Random.signKeyPairFromSecretKey = function(secretKey) {
+            return Nacl.sign.keyPair.fromSecretKey(secretKey);
         };
 
-        // Allocate bytes for user credentials (from common-login.js)
-        Random.allocateBytes = function (bytes, dispenser) {
-            var result = {};
-
-            if (!dispenser) {
-                dispenser = function (bytes) {
-                    var buff = [];
-                    for (var i = 0; i < bytes; i++) {
-                        buff.push(Nacl.randomBytes(1)[0]);
-                    }
-                    return buff;
-                };
-            }
-
-            // dispense 18 bytes of entropy for your encryption key
-            var encryptionSeed = dispenser(18);
-            // 16 bytes for a deterministic channel key
-            var channelSeed = dispenser(16);
-            // 32 bytes for a curve key
-            var curveSeed = dispenser(32);
-
-            var curvePair = Nacl.box.keyPair.fromSecretKey(new Uint8Array(curveSeed));
-            result.curvePrivate = encodeBase64(curvePair.secretKey);
-            result.curvePublic = encodeBase64(curvePair.publicKey);
-
-            // 32 more for a signing key
-            var edSeed = result.edSeed = dispenser(32);
-
-            // 64 more bytes to seed an additional signing key
-            var blockKeyBytes = dispenser(64);
-            result.blockKeyBytes = blockKeyBytes;
-
-            // derive a private key from the ed seed
-            var signingKeypair = Nacl.sign.keyPair.fromSeed(new Uint8Array(edSeed));
-
-            result.edPrivate = encodeBase64(signingKeypair.secretKey);
-            result.edPublic = encodeBase64(signingKeypair.publicKey);
-
-            var keys = result.keys = Crypto.createEditCryptor(null, encryptionSeed);
-
-            // 24 bytes of base64
-            keys.editKeyStr = keys.editKeyStr.replace(/\//g, '-');
-
-            // 32 bytes of hex
-            var channelHex = result.channelHex = encodeHex(channelSeed);
-
-            // should never happen
-            if (channelHex.length !== 32) { throw new Error('invalid channel id'); }
-
-            return result;
+        Random.signKeyPair = function() {
+            return Nacl.sign.keyPair();
         };
 
-        // Create random hash for different types of content (from common-hash.js)
-        Random.createRandomHash = function (type, password) {
-            var cryptor;
-            if (type === 'file') {
-                cryptor = Crypto.createFileCryptor2(void 0, password);
-                return '/2/' + type + '/' + Crypto.b64RemoveSlashes(cryptor.fileKeyStr) + '/' + (password ? 'p/' : '');
-            }
-            cryptor = Crypto.createEditCryptor2(void 0, void 0, password);
-            return '/2/' + type + '/edit/' + Crypto.b64RemoveSlashes(cryptor.editKeyStr) + '/' + (password ? 'p/' : '');
+        Random.sign = function(message, secretKey) {
+            return Nacl.sign(message, secretKey);
+        }
+
+        Random.signOpen = function(signedMessage, publicKey) {
+            return Nacl.sign.open(signedMessage, publicKey);
+        }
+
+        Random.signDetached = function(message, secretKey) {
+            return Nacl.sign.detached(message, secretKey);
+        }
+
+        Random.verifyDetached = function(signature, message, publicKey) {
+            return Nacl.sign.detached.verify(message, signature, publicKey);
+        }
+
+        Random.curveKeyPair = function() {
+            return Nacl.box.keyPair();
         };
 
-        // Generate random bytes with a specified length (utility function)
+        Random.box = function(message, nonce, theirPublicKey, mySecretKey) {
+            return Nacl.box(message, nonce, theirPublicKey, mySecretKey);
+        };
+
+        Random.boxOpen = function(ciphertext, nonce, theirPublicKey, mySecretKey) {
+            return Nacl.box.open(ciphertext, nonce, theirPublicKey, mySecretKey);
+        }
+
+        Random.boxKeyPairFromSecretKey = function(secretKey) {
+            return Nacl.box.keyPair.fromSecretKey(secretKey);
+        };
+
+        Random.secretbox = function(message, nonce, key) {
+            return Nacl.secretbox(message, nonce, key);
+        }
+
+        Random.secretboxOpen = function(ciphertext, nonce, key) {
+            return Nacl.secretbox.open(ciphertext, nonce, key);
+        };
+
+        Random.createHash = function(data) {
+            return Nacl.hash(data);
+        };
+
         Random.bytes = function(length) {
             return Nacl.randomBytes(length);
         };
 
+        Random.boxNonceLength = function() {
+            return Nacl.box.nonceLength;
+        }
+
+        Random.signSeedLength = function() {
+            return Nacl.sign.seedLength;
+        }
+
+        Random.boxKeyLength = function() {
+            return Nacl.box.publicKeyLength;
+        }
+
+        Random.secretboxKeyLength = function() {
+            return Nacl.secretbox.keyLength;
+        }
+
+        Random.secretboxNonceLength = function() {
+            return Nacl.secretbox.nonceLength;
+        }
+
+        Random.signKeyLength = function() {
+            return Nacl.sign.publicKeyLength;
+        }
+
+
+        // Box encryption and decryption abstraction
+        var Box = Crypto.Box = {};
+
+        // Box encryption
+        Box.encrypt = function(message, nonce, theirPublicKey, mySecretKey) {
+            return Nacl.box(message, nonce, theirPublicKey, mySecretKey);
+        };
+
+        // Box decryption
+        Box.decrypt = function(ciphertext, nonce, theirPublicKey, mySecretKey) {
+            return Nacl.box.open(ciphertext, nonce, theirPublicKey, mySecretKey);
+        };
+
+        // Box.after encryption
+        Box.encryptAfter = function(message, nonce, sharedSecret) {
+            return Nacl.box.after(message, nonce, sharedSecret);
+        };
+
+        // Box.after decryption
+        Box.decryptAfter = function(ciphertext, nonce, sharedSecret) {
+            return Nacl.box.open.after(ciphertext, nonce, sharedSecret);
+        };
+
+        // Box shared secret creation
+        Box.getSharedSecret = function(theirPublicKey, mySecretKey) {
+            return Nacl.box.before(theirPublicKey, mySecretKey);
+        };
+
+        // SecretBox (symmetric) encryption/decryption abstraction
+        var SecretBox = Crypto.SecretBox = {};
+
+        // SecretBox encryption
+        SecretBox.encrypt = function(message, nonce, key) {
+            return Nacl.secretbox(message, nonce, key);
+        };
+
+        // SecretBox decryption
+        SecretBox.decrypt = function(ciphertext, nonce, key) {
+            return Nacl.secretbox.open(ciphertext, nonce, key);
+        };
+
+        // Signature abstraction
+        var Sign = Crypto.Sign = {};
+
+        // Sign a message
+        Sign.sign = function(message, secretKey) {
+            return Nacl.sign(message, secretKey);
+        };
+
+        // Verify a signature
+        Sign.verify = function(signedMessage, publicKey) {
+            return Nacl.sign.open(signedMessage, publicKey);
+        };
+
+        // Detached sign
+        Sign.detached = function(message, secretKey) {
+            return Nacl.sign.detached(message, secretKey);
+        };
+
+        // Verify detached
+        Sign.verifyDetached = function(signature, message, publicKey) {
+            return Nacl.sign.detached.verify(message, signature, publicKey);
+        };
+
+
         var encryptStr = function (str, key) {
             var array = decodeUTF8(str);
-            var nonce = Nacl.randomBytes(24);
-            var packed = Nacl.secretbox(array, nonce, key);
+            var nonce = Random.bytes(24);
+            var packed = SecretBox.encrypt(array, nonce, key);
             if (!packed) { throw new Error(); }
             return encodeBase64(nonce) + "|" + encodeBase64(packed);
         };
@@ -139,7 +204,7 @@
             if (arr.length !== 2) { throw new Error(); }
             var nonce = decodeBase64(arr[0]);
             var packed = decodeBase64(arr[1]);
-            var unpacked = Nacl.secretbox.open(packed, nonce, key);
+            var unpacked = SecretBox.decrypt(packed, nonce, key);
             if (!unpacked) { throw new Error(); }
             return encodeUTF8(unpacked);
         };
@@ -155,7 +220,7 @@
         var parseKey = Crypto.parseKey = function (str) {
             try {
                 var array = decodeBase64(str);
-                var hash = Nacl.hash(array);
+                var hash = Random.createHash(array);
                 var lk = hash.subarray(32);
                 return {
                     lookupKey: lk,
@@ -169,7 +234,7 @@
         };
 
         var rand64 = Crypto.rand64 = function (bytes) {
-            return encodeBase64(Nacl.randomBytes(bytes));
+            return encodeBase64(Random.bytes(bytes));
         };
 
         Crypto.genKey = function () {
@@ -956,6 +1021,364 @@
             return out;
         };
 
+
+        // =====================================================
+        // Post-Quantum Cryptography Extension
+        // =====================================================
+
+        // Initialize PQ libraries - must be called before using PQ features
+        Crypto.initPQ = async function() {
+            try {
+                const { ml_kem1024 } = await import("https://cdn.jsdelivr.net/npm/@noble/post-quantum/ml-kem/+esm");
+                const { ml_dsa87 } = await import("https://cdn.jsdelivr.net/npm/@noble/post-quantum/ml-dsa/+esm");
+
+                // Store in Crypto object for use throughout the library
+                Crypto.PQ = {
+                    kem: ml_kem1024,    // ML-KEM-1024 (strongest Kyber variant)
+                    dsa: ml_dsa87,      // ML-DSA-87 (strongest Dilithium variant)
+                    initialized: true
+                };
+
+                // Extend existing Team and Mailbox with PQ capabilities
+                Crypto._extendTeam();
+                Crypto._extendMailbox();
+
+                return true;
+            } catch (err) {
+                console.error('[Crypto] Failed to initialize PQ libraries:', err);
+                return false;
+            }
+        };
+
+        // Check if PQ is properly initialized
+        Crypto._checkPQ = function() {
+            if (!Crypto.PQ || !Crypto.PQ.initialized) {
+                throw new Error('Post-quantum cryptography not initialized. Call Crypto.initPQ() first.');
+            }
+        };
+
+        // Generate PQ keypairs for both encryption and signing
+        Crypto.generatePQKeys = async function() {
+            Crypto._checkPQ();
+
+            const kemKeypair = Crypto.PQ.kem.keygen();
+            const dsaKeypair = Crypto.PQ.dsa.keygen();
+
+            return {
+                // KEM keys for encryption/decryption
+                pqEncPublic: encodeBase64(kemKeypair.publicKey),
+                pqEncPrivate: encodeBase64(kemKeypair.secretKey),
+
+                // DSA keys for signing/verification
+                pqSignKey: encodeBase64(dsaKeypair.secretKey),
+                pqValidateKey: encodeBase64(dsaKeypair.publicKey)
+            };
+        };
+
+        // Extend Team with PQ capabilities
+        Crypto._extendTeam = function() {
+            // Save reference to original function
+            var originalTeamEncryptor = Team.createEncryptor;
+
+            // Replace with enhanced version
+            Team.createEncryptor = function(keys) {
+                // Create the original encryptor first
+                var originalEncryptor = originalTeamEncryptor(keys);
+
+                // If no PQ keys provided, return the original encryptor
+                if (!keys.pqTeamEncPublic || !keys.pqTeamValidateKey ||
+                    (originalEncryptor.encrypt && (!keys.pqTeamEncPrivate || !keys.pqTeamSignKey)) ||
+                    (originalEncryptor.decrypt && (!keys.pqTeamEncPrivate || !keys.pqTeamValidateKey))) {
+                    return originalEncryptor;
+                }
+
+                // Check if PQ is initialized
+                if (!Crypto.PQ || !Crypto.PQ.initialized) {
+                    console.warn("[Crypto] Post-quantum libraries not initialized - using classical encryption only");
+                    return originalEncryptor;
+                }
+
+                // Create an enhanced encryptor with PQ capabilities
+                var enhancedEncryptor = {};
+
+                if (originalEncryptor.encrypt) {
+                    enhancedEncryptor.encrypt = function(msg) {
+                        try {
+                            // First encrypt with traditional cryptography
+                            var traditionalCiphertext = originalEncryptor.encrypt(msg);
+                            if (!traditionalCiphertext) return null;
+
+                            // Then apply PQ protection
+                            // 1. Encapsulate a shared secret using team's PQ public key
+                            const pqTeamPubKey = decodeBase64(keys.pqTeamEncPublic);
+                            const { cipherText, sharedSecret } = Crypto.PQ.kem.encapsulate(pqTeamPubKey);
+
+                            // 2. Use the shared secret to encrypt the traditional ciphertext
+                            const nonce = Nacl.randomBytes(24);
+                            const pqEncrypted = Nacl.secretbox(
+                                decodeUTF8(traditionalCiphertext),
+                                nonce,
+                                sharedSecret.slice(0, 32)
+                            );
+
+                            // 3. Bundle everything together
+                            const bundle = {
+                                pq: true, // Marker for PQ-enhanced message
+                                v: 1,     // Version
+                                nonce: encodeBase64(nonce),
+                                ct: encodeBase64(cipherText),
+                                data: encodeBase64(pqEncrypted)
+                            };
+
+                            // 4. Sign with PQ signature
+                            const bundleBytes = decodeUTF8(JSON.stringify(bundle));
+                            const pqSignature = Crypto.PQ.dsa.sign(
+                                decodeBase64(keys.pqTeamSignKey),
+                                bundleBytes
+                            );
+
+                            // 5. Return the complete PQ-enhanced message
+                            return {
+                                pq: true,
+                                v: 1,
+                                bundle: bundle,
+                                signature: encodeBase64(pqSignature)
+                            };
+                        } catch (err) {
+                            console.error('[Crypto] PQ Team encryption error:', err);
+                            return null;
+                        }
+                    };
+                }
+
+                if (originalEncryptor.decrypt) {
+                    enhancedEncryptor.decrypt = function(msg, skipValidation) {
+                        try {
+                            // Check if this is a PQ-enhanced message
+                            if (typeof msg === 'object' && msg.pq === true && msg.v === 1) {
+                                // 1. Verify PQ signature unless skipped
+                                if (!skipValidation) {
+                                    const bundleBytes = decodeUTF8(JSON.stringify(msg.bundle));
+                                    const signatureBytes = decodeBase64(msg.signature);
+                                    const pqTeamValidateKeyBytes = decodeBase64(keys.pqTeamValidateKey);
+
+                                    const isValid = Crypto.PQ.dsa.verify(
+                                        pqTeamValidateKeyBytes,
+                                        bundleBytes,
+                                        signatureBytes
+                                    );
+
+                                    if (!isValid) {
+                                        console.error('[Crypto] PQ signature verification failed');
+                                        return null;
+                                    }
+                                }
+
+                                // 2. Decrypt the PQ layer
+                                const { ct, nonce, data } = msg.bundle;
+
+                                // 2a. Decapsulate the shared secret using team's PQ private key
+                                const pqTeamPrivateKey = decodeBase64(keys.pqTeamEncPrivate);
+                                const ciphertextBytes = decodeBase64(ct);
+                                const sharedSecret = Crypto.PQ.kem.decapsulate(
+                                    ciphertextBytes,
+                                    pqTeamPrivateKey
+                                );
+
+                                // 2b. Decrypt the data using the shared secret
+                                const nonceBytes = decodeBase64(nonce);
+                                const encryptedBytes = decodeBase64(data);
+                                const traditionalCiphertext = Nacl.secretbox.open(
+                                    encryptedBytes,
+                                    nonceBytes,
+                                    sharedSecret.slice(0, 32)
+                                );
+
+                                if (!traditionalCiphertext) {
+                                    throw new Error('PQ decryption failed');
+                                }
+
+                                // 3. Decrypt the traditional layer
+                                return originalEncryptor.decrypt(
+                                    encodeUTF8(traditionalCiphertext),
+                                    skipValidation
+                                );
+                            } else {
+                                // Not a PQ message, use traditional decryption
+                                return originalEncryptor.decrypt(msg, skipValidation);
+                            }
+                        } catch (err) {
+                            console.error('[Crypto] PQ Team decryption error:', err);
+                            return null;
+                        }
+                    };
+                }
+
+                // Copy any other properties from original encryptor
+                Object.keys(originalEncryptor).forEach(function(key) {
+                    if (!enhancedEncryptor[key]) {
+                        enhancedEncryptor[key] = originalEncryptor[key];
+                    }
+                });
+
+                return enhancedEncryptor;
+            };
+
+            console.error('[Crypto] Error deriving PQ team keys:', err);
+            return traditionalKeys; // Fall back to traditional keys on error
+        }
+
+        // Extend Mailbox with PQ capabilities
+        Crypto._extendMailbox = function() {
+            // Save reference to original function
+            var originalMailboxEncryptor = Mailbox.createEncryptor;
+
+            // Replace with enhanced version
+            Mailbox.createEncryptor = function(keys) {
+                // Create the original encryptor first
+                var originalEncryptor = originalMailboxEncryptor(keys);
+
+                // If no PQ keys provided, return the original encryptor
+                if (!keys.pqEncPublic || !keys.pqEncPrivate || !keys.pqSignKey || !keys.pqValidateKey) {
+                    return originalEncryptor;
+                }
+
+                // Check if PQ is initialized
+                if (!Crypto.PQ || !Crypto.PQ.initialized) {
+                    console.warn("[Crypto] Post-quantum libraries not initialized - using classical encryption only");
+                    return originalEncryptor;
+                }
+
+                return {
+                    encrypt: function(plain, recipient) {
+                        try {
+                            // First encrypt with traditional crypto
+                            const traditionalCiphertext = originalEncryptor.encrypt(plain, recipient);
+                            if (!traditionalCiphertext) return null;
+
+                            // Get recipient's PQ public key (this would need to be handled in your system)
+                            // For now, assume we have it available as recipientPqEncPublic
+                            let recipientPqEncPublic = recipient + ".pq"; // This is a placeholder
+
+                            // Apply PQ protection layer
+                            // 1. Encapsulate a shared secret using recipient's PQ public key
+                            const recipientPqPubKey = decodeBase64(recipientPqEncPublic);
+                            const { cipherText, sharedSecret } = Crypto.PQ.kem.encapsulate(recipientPqPubKey);
+
+                            // 2. Use shared secret to encrypt the traditional ciphertext
+                            const nonce = Nacl.randomBytes(24);
+                            const pqEncrypted = Nacl.secretbox(
+                                decodeUTF8(traditionalCiphertext),
+                                nonce,
+                                sharedSecret.slice(0, 32)
+                            );
+
+                            // 3. Bundle everything together
+                            const bundle = {
+                                pq: true, // Marker for PQ-enhanced message
+                                v: 1,     // Version
+                                nonce: encodeBase64(nonce),
+                                ct: encodeBase64(cipherText),
+                                data: encodeBase64(pqEncrypted),
+                                sender: keys.pqEncPublic // Include sender's PQ public key
+                            };
+
+                            // 4. Sign with PQ signature
+                            const bundleBytes = decodeUTF8(JSON.stringify(bundle));
+                            const pqSignature = Crypto.PQ.dsa.sign(
+                                decodeBase64(keys.pqSignKey),
+                                bundleBytes
+                            );
+
+                            // 5. Also sign with traditional signature for dual verification
+                            const traditionalSignature = Nacl.sign(bundleBytes, decodeBase64(keys.signingKey));
+
+                            // 6. Return the complete PQ-enhanced message
+                            return {
+                                pq: true,
+                                v: 1,
+                                bundle: bundle,
+                                pqSignature: encodeBase64(pqSignature),
+                                traditionalSignature: encodeBase64(traditionalSignature)
+                            };
+                        } catch (err) {
+                            console.error('[Crypto] PQ Mailbox encryption error:', err);
+                            return null;
+                        }
+                    },
+
+                    decrypt: function(cipher) {
+                        try {
+                            // Check if this is a PQ-enhanced message
+                            if (typeof cipher === 'object' && cipher.pq === true && cipher.v === 1) {
+                                // 1. Verify both signatures (PQ and traditional)
+                                const bundleBytes = decodeUTF8(JSON.stringify(cipher.bundle));
+
+                                // 1a. Verify PQ signature
+                                const pqSignatureBytes = decodeBase64(cipher.pqSignature);
+                                const senderPqValidateKey = decodeBase64(cipher.bundle.sender.replace(/\.pq$/, '.pqValidate')); // Placeholder
+
+                                const pqValid = Crypto.PQ.dsa.verify(
+                                    senderPqValidateKey,
+                                    bundleBytes,
+                                    pqSignatureBytes
+                                );
+
+                                // 1b. Verify traditional signature
+                                let traditionalValid = false;
+                                try {
+                                    const tradSignatureBytes = decodeBase64(cipher.traditionalSignature);
+                                    // Get sender's traditional validation key (this would need to be handled in your system)
+                                    const senderTraditionalValidateKey = cipher.bundle.sender.replace(/\.pq$/, '.validate'); // Placeholder
+
+                                    const validated = Nacl.sign.open(tradSignatureBytes, decodeBase64(senderTraditionalValidateKey));
+                                    traditionalValid = !!validated;
+                                } catch (e) {
+                                    traditionalValid = false;
+                                }
+
+                                // 1c. Both signatures must be valid
+                                if (!pqValid || !traditionalValid) {
+                                    console.error('[Crypto] Dual signature verification failed:',
+                                        {pqValid, traditionalValid});
+                                    return null;
+                                }
+
+                                // 2. Decrypt the PQ layer
+                                const { ct, nonce, data } = cipher.bundle;
+
+                                // 2a. Decapsulate the shared secret using our PQ private key
+                                const myPqPrivateKey = decodeBase64(keys.pqEncPrivate);
+                                const ciphertextBytes = decodeBase64(ct);
+                                const sharedSecret = Crypto.PQ.kem.decapsulate(ciphertextBytes, myPqPrivateKey);
+
+                                // 2b. Decrypt the data using the shared secret
+                                const nonceBytes = decodeBase64(nonce);
+                                const encryptedBytes = decodeBase64(data);
+                                const traditionalCiphertext = Nacl.secretbox.open(
+                                    encryptedBytes,
+                                    nonceBytes,
+                                    sharedSecret.slice(0, 32)
+                                );
+
+                                if (!traditionalCiphertext) {
+                                    throw new Error('PQ decryption failed');
+                                }
+
+                                // 3. Decrypt the traditional layer
+                                return originalEncryptor.decrypt(encodeUTF8(traditionalCiphertext));
+                            } else {
+                                // Not a PQ message, use traditional decryption
+                                return originalEncryptor.decrypt(cipher);
+                            }
+                        } catch (err) {
+                            console.error('[Crypto] PQ Mailbox decryption error:', err);
+                            return null;
+                        }
+                    }
+                };
+            };
+        };
 
         return Crypto;
     };
