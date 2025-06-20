@@ -1,18 +1,10 @@
 (function () {
     'use strict';
-    var factory = function (Nacl, NaclUtil, ml_kem, ml_dsa, utils) {
+    var factory = function (Nacl, NaclUtil, PostQuantum) {
 
         var Crypto = {
             Nacl: Nacl,
-            PQ: {
-                ml_kem: ml_kem,
-                ml_kem1024: ml_kem,
-
-                ml_dsa: ml_dsa,
-                ml_dsa87: ml_dsa,
-
-                utils: utils
-            }
+            PQ: PostQuantum
         };
 
         var encodeBase64 = NaclUtil.encodeBase64;
@@ -1046,22 +1038,18 @@
             '/components/tweetnacl/nacl-fast.min.js',
             '/components/tweetnacl-util/nacl-util.min.js',
             '/components/@noble/post-quantum/index.js'
-        ], function (Nacl, NaclUtil, ml_kem, ml_dsa, utils) {
+        ], function (Nacl, NaclUtil, PostQuantum) {
             return factory(
                 Nacl,
                 NaclUtil,
-                ml_kem,
-                ml_dsa,
-                utils
+                PostQuantum,
             );
         });
     } else {
         window.chainpad_crypto = factory(
             window.nacl,
             window.nacl.util,
-            window.ml_kem,
-            window.ml_dsa,
-            window.utils
+            window.PostQuantum
         );
     }
 })();
