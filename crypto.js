@@ -1,10 +1,9 @@
 (function () {
     'use strict';
     var factory = function (Nacl, NaclUtil, PostQuantum) {
-
         var Crypto = {
             Nacl: Nacl,
-            PQ: PostQuantum
+            PQC: PostQuantum
         };
 
         var encodeBase64 = NaclUtil.encodeBase64;
@@ -1022,35 +1021,21 @@
 
             return out;
         };
+
         return Crypto;
     };
 
-    if (typeof module !== 'undefined' && module.exports) {
-        module.exports = factory(
-            require('tweetnacl/nacl-fast'),
-            require('tweetnacl-util'),
-            require('@noble/post-quantum/ml-kem'),
-            require('@noble/post-quantum/ml-dsa'),
-            require('@noble/post-quantum/utils')
-        );
-    } else if (typeof define === 'function' && define.amd) {
+    if (typeof(module) !== 'undefined' && module.exports) {
+        module.exports = factory(require('tweetnacl/nacl-fast'), require('tweetnacl-util'));
+    } else if ((typeof(define) !== 'undefined' && define !== null) && (define.amd !== null)) {
         define([
             '/components/tweetnacl/nacl-fast.min.js',
             '/components/tweetnacl-util/nacl-util.min.js',
             '/components/@noble/post-quantum/index.js'
-        ], function (Nacl, NaclUtil, PostQuantum) {
-            return factory(
-                Nacl,
-                NaclUtil,
-                PostQuantum,
-            );
+        ], function () {
+            return factory(window.nacl, window.nacl?.util, window.PostQuantum);
         });
     } else {
-        window.chainpad_crypto = factory(
-            window.nacl,
-            window.nacl.util,
-            window.PostQuantum
-        );
+        window.chainpad_crypto = factory(window.nacl, window.PostQuantum);
     }
-})();
-
+}());
