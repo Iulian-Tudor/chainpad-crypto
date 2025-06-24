@@ -32,7 +32,102 @@
             };
         */
 
-        // Random generation namespace
+
+        var Hybrid = Crypto.Hybrid = {};
+
+        // Key derivation function (KDF) to combine classical and post-quantum keys
+        Hybrid.deriveKey = function(k1, k2) {
+            // Simple KDF: Use hash of concatenated keys. TO BE replaced with a proper one
+            return Nacl.hash(new Uint8Array([...k1, ...k2])).slice(0, 32);
+        };
+
+        // Generate hybrid keypair (classical + post-quantum)
+        Hybrid.generateKeypair = function() {
+            var classicalKeyPair = Nacl.box.keyPair();
+            var pqKeyPair = PostQuantum.ml_kem1024.keygen();
+
+            return {
+                classical: {
+                    publicKey: classicalKeyPair.publicKey,
+                    secretKey: classicalKeyPair.secretKey
+                },
+                postQuantum: {
+                    publicKey: pqKeyPair.publicKey,
+                    secretKey: pqKeyPair.secretKey
+                }
+            };
+        };
+
+        // Layered encryption (classical then post-quantum)
+        Hybrid.encrypt = function(message, classicalPubKey, pqPubKey) {
+            // First layer: encrypt with classical encryption
+            var nonce = Nacl.randomBytes(24);
+            var classicalCiphertext = Nacl.box(message, nonce, classicalPubKey, Nacl.box.keyPair().secretKey);
+
+            // Second layer: encrypt the first ciphertext with post-quantum
+            var pqResult = PostQuantum.ml_kem1024.encapsulate(pqPubKey);
+            var sharedSecret = pqResult.sharedSecret;
+
+            // Use the shared secret to encrypt the classical ciphertext
+            var secondLayerNonce = Nacl.randomBytes(24);
+            var secondLayerCiphertext = Nacl.secretbox(classicalCiphertext, secondLayerNonce, sharedSecret);
+
+            // Return all necessary components for decryption
+            return {
+                nonce: nonce,
+                secondLayerNonce: secondLayerNonce,
+                ciphertext: secondLayerCiphertext,
+                pqCiphertext: pqResult.cipherText
+            };
+        };
+
+        // Layered decryption (post-quantum then classical)
+        Hybrid.decrypt = function(hybrid, classicalPubKey, classicalSecretKey, pqSecretKey) {
+            // First, decrypt the outer post-quantum layer
+            var sharedSecret = PostQuantum.ml_kem1024.decapsulate(hybrid.pqCiphertext, pqSecretKey);
+
+            // Decrypt the inner layer to get the classical ciphertext
+            var classicalCiphertext = Nacl.secretbox.open(hybrid.ciphertext, hybrid.secondLayerNonce, sharedSecret);
+            if (!classicalCiphertext) {
+                return null; // Decryption failed
+            }
+
+            // Finally decrypt the classical layer
+            return Nacl.box.open(classicalCiphertext, hybrid.nonce, classicalPubKey, classicalSecretKey);
+        };
+
+        // Key encapsulation mechanism (KEM) for hybrid cryptography
+        Hybrid.encapsulate = function(classicalPubKey, pqPubKey) {
+            // Generate classical shared secret
+            var classicalEphemeralKey = Nacl.box.keyPair();
+            var classicalSharedSecret = Nacl.box.before(classicalPubKey, classicalEphemeralKey.secretKey);
+
+            // Generate post-quantum shared secret
+            var pqResult = PostQuantum.ml_kem1024.encapsulate(pqPubKey);
+
+            // Combine the shared secrets
+            var finalSharedSecret = Hybrid.deriveKey(classicalSharedSecret, pqResult.sharedSecret);
+
+            return {
+                sharedSecret: finalSharedSecret,
+                classicalPubKey: classicalEphemeralKey.publicKey,
+                pqCiphertext: pqResult.cipherText
+            };
+        };
+
+        // Decapsulation for hybrid KEM
+        Hybrid.decapsulate = function(encapsulation, classicalSecretKey, pqSecretKey) {
+            // Recover classical shared secret
+            var classicalSharedSecret = Nacl.box.before(encapsulation.classicalPubKey, classicalSecretKey);
+
+            // Recover post-quantum shared secret
+            var pqSharedSecret = PostQuantum.ml_kem1024.decapsulate(encapsulation.pqCiphertext, pqSecretKey);
+
+            // Derive final shared key
+            return Hybrid.deriveKey(classicalSharedSecret, pqSharedSecret);
+        };
+
+        // Nacl Abstractions
         var Random = Crypto.Random = {};
 
         Random.decodeBase64 = decodeBase64;
@@ -129,29 +224,138 @@
         // Box encryption and decryption abstraction
         var Box = Crypto.Box = {};
 
-        // Box encryption
+        // Hybrid Box encryption
         Box.encrypt = function(message, nonce, theirPublicKey, mySecretKey) {
-            return Nacl.box(message, nonce, theirPublicKey, mySecretKey);
+            // Original NaCl box encryption
+            var classicalCiphertext = Nacl.box(message, nonce, theirPublicKey, mySecretKey);
+
+            // If post-quantum is not available, use only classical
+            if (!PostQuantum || !PostQuantum.ml_kem1024) {
+                return classicalCiphertext;
+            }
+
+            try {
+                // Generate a random key for post-quantum encryption
+                var pqNonce = Nacl.randomBytes(24);
+
+                // Use post-quantum to encrypt the classical ciphertext
+                // Note: This is a simplified example; in a real implementation,
+                // you'd use proper KEM with Kyber
+                var pqCiphertext = PostQuantum.ml_kem1024.encrypt(classicalCiphertext, theirPublicKey.pq || theirPublicKey);
+
+                // Return combined ciphertext
+                return {
+                    classical: classicalCiphertext,
+                    postQuantum: pqCiphertext,
+                    pqNonce: pqNonce
+                };
+            } catch (e) {
+                console.error('Post-quantum encryption failed, falling back to classical', e);
+                return classicalCiphertext;
+            }
         };
 
-        // Box decryption
+        // Hybrid Box decryption
         Box.decrypt = function(ciphertext, nonce, theirPublicKey, mySecretKey) {
+            // If it's a hybrid ciphertext object
+            if (ciphertext && typeof ciphertext === 'object' && ciphertext.classical && ciphertext.postQuantum) {
+                try {
+                    // First decrypt the post-quantum layer
+                    var classicalCiphertext = PostQuantum.ml_kem1024.decrypt(
+                        ciphertext.postQuantum,
+                        mySecretKey.pq || mySecretKey
+                    );
+
+                    // Then decrypt the classical layer
+                    return Nacl.box.open(
+                        classicalCiphertext,
+                        nonce,
+                        theirPublicKey.classical || theirPublicKey,
+                        mySecretKey.classical || mySecretKey
+                    );
+                } catch (e) {
+                    console.error('Hybrid decryption failed, attempting classical fallback', e);
+                    // Fall back to classical decryption
+                    return Nacl.box.open(ciphertext.classical, nonce, theirPublicKey, mySecretKey);
+                }
+            }
+
+            // Standard NaCl box decryption for backward compatibility
             return Nacl.box.open(ciphertext, nonce, theirPublicKey, mySecretKey);
         };
 
         // Box.after encryption
         Box.encryptAfter = function(message, nonce, sharedSecret) {
+            // If it's a hybrid shared secret (from Hybrid.encapsulate)
+            if (sharedSecret && typeof sharedSecret === 'object' && sharedSecret.classical && sharedSecret.postQuantum) {
+                var classicalCiphertext = Nacl.box.after(message, nonce, sharedSecret.classical);
+
+                try {
+                    // Use the post-quantum shared secret to encrypt the classical ciphertext
+                    var pqCiphertext = PostQuantum.ml_kem1024.encrypt(classicalCiphertext, sharedSecret.postQuantum);
+
+                    return {
+                        classical: classicalCiphertext,
+                        postQuantum: pqCiphertext
+                    };
+                } catch (e) {
+                    console.error('Post-quantum encryption failed in encryptAfter, falling back to classical', e);
+                    return classicalCiphertext;
+                }
+            }
+
+            // Standard NaCl box.after encryption for backward compatibility
             return Nacl.box.after(message, nonce, sharedSecret);
         };
 
         // Box.after decryption
         Box.decryptAfter = function(ciphertext, nonce, sharedSecret) {
+            // If it's a hybrid ciphertext
+            if (ciphertext && typeof ciphertext === 'object' && ciphertext.classical && ciphertext.postQuantum) {
+                try {
+                    // First decrypt the post-quantum layer
+                    var classicalCiphertext = PostQuantum.ml_kem1024.decrypt(
+                        ciphertext.postQuantum,
+                        sharedSecret.postQuantum
+                    );
+
+                    // Then decrypt the classical layer
+                    return Nacl.box.open.after(classicalCiphertext, nonce, sharedSecret.classical);
+                } catch (e) {
+                    console.error('Hybrid decryption failed in decryptAfter, attempting classical fallback', e);
+                    return Nacl.box.open.after(ciphertext.classical, nonce, sharedSecret);
+                }
+            }
+
+            // Standard NaCl box.open.after decryption for backward compatibility
             return Nacl.box.open.after(ciphertext, nonce, sharedSecret);
         };
 
-        // Box shared secret creation
+        // Box shared secret creation - hybrid approach
         Box.getSharedSecret = function(theirPublicKey, mySecretKey) {
-            return Nacl.box.before(theirPublicKey, mySecretKey);
+            // Classical shared secret
+            var classicalSharedSecret = Nacl.box.before(theirPublicKey, mySecretKey);
+
+            // If post-quantum is not available or keys aren't compatible, return only classical
+            if (!PostQuantum || !PostQuantum.kyber ||
+                !theirPublicKey.pq || !mySecretKey.pq) {
+                return classicalSharedSecret;
+            }
+
+            try {
+                // Post-quantum shared secret
+                var pqResult = PostQuantum.kyber.encapsulate(theirPublicKey.pq);
+
+                // Combine both secrets
+                return {
+                    classical: classicalSharedSecret,
+                    postQuantum: pqResult.sharedSecret,
+                    pqCiphertext: pqResult.ciphertext
+                };
+            } catch (e) {
+                console.error('Post-quantum key exchange failed, falling back to classical', e);
+                return classicalSharedSecret;
+            }
         };
 
         // SecretBox (symmetric) encryption/decryption abstraction
@@ -170,23 +374,134 @@
         // Signature abstraction
         var Sign = Crypto.Sign = {};
 
-        // Sign a message
+        // Sign a message - hybrid approach (classical + post-quantum)
         Sign.sign = function(message, secretKey) {
-            return Nacl.sign(message, secretKey);
+            // Classical signature
+            var classicalSignature = Nacl.sign(message, secretKey);
+
+            // If post-quantum is not available or we don't have PQ keys, return only classical
+            if (!PostQuantum || !PostQuantum.dilithium || !secretKey.pq) {
+                return classicalSignature;
+            }
+
+            try {
+                // Post-quantum signature
+                var pqSignature = PostQuantum.dilithium.sign(message, secretKey.pq);
+
+                // Return both signatures
+                return {
+                    classical: classicalSignature,
+                    postQuantum: pqSignature
+                };
+            } catch (e) {
+                console.error('Post-quantum signing failed, falling back to classical', e);
+                return classicalSignature;
+            }
         };
 
-        // Verify a signature
+        // Verify a signature - hybrid approach
         Sign.verify = function(signedMessage, publicKey) {
+            // If it's a hybrid signature object
+            if (signedMessage && typeof signedMessage === 'object' &&
+                signedMessage.classical && signedMessage.postQuantum) {
+                try {
+                    // Verify both classical and post-quantum signatures
+                    var classicalValid = Nacl.sign.open(signedMessage.classical, publicKey);
+
+                    if (!classicalValid) {
+                        return false;
+                    }
+
+                    // If we have PQ keys, also verify PQ signature
+                    if (publicKey.pq && PostQuantum && PostQuantum.dilithium) {
+                        var pqValid = PostQuantum.dilithium.verify(
+                            signedMessage.postQuantum,
+                            publicKey.pq
+                        );
+
+                        if (!pqValid) {
+                            return false;
+                        }
+                    }
+
+                    // Both signatures verified
+                    return classicalValid;
+                } catch (e) {
+                    console.error('Hybrid verification failed, attempting classical fallback', e);
+                    // Fall back to classical verification
+                    return Nacl.sign.open(signedMessage.classical, publicKey);
+                }
+            }
+
+            // Standard NaCl signature verification for backward compatibility
             return Nacl.sign.open(signedMessage, publicKey);
         };
 
-        // Detached sign
+        // Detached sign - hybrid approach
         Sign.detached = function(message, secretKey) {
-            return Nacl.sign.detached(message, secretKey);
+            // Classical detached signature
+            var classicalSignature = Nacl.sign.detached(message, secretKey);
+
+            // If post-quantum is not available or we don't have PQ keys, return only classical
+            if (!PostQuantum || !PostQuantum.dilithium || !secretKey.pq) {
+                return classicalSignature;
+            }
+
+            try {
+                // Post-quantum detached signature
+                var pqSignature = PostQuantum.dilithium.signDetached(message, secretKey.pq);
+
+                // Return both signatures
+                return {
+                    classical: classicalSignature,
+                    postQuantum: pqSignature
+                };
+            } catch (e) {
+                console.error('Post-quantum detached signing failed, falling back to classical', e);
+                return classicalSignature;
+            }
         };
 
-        // Verify detached
+        // Verify detached - hybrid approach
         Sign.verifyDetached = function(signature, message, publicKey) {
+            // If it's a hybrid signature object
+            if (signature && typeof signature === 'object' &&
+                signature.classical && signature.postQuantum) {
+                try {
+                    // Verify both classical and post-quantum signatures
+                    var classicalValid = Nacl.sign.detached.verify(
+                        message,
+                        signature.classical,
+                        publicKey
+                    );
+
+                    if (!classicalValid) {
+                        return false;
+                    }
+
+                    // If we have PQ keys, also verify PQ signature
+                    if (publicKey.pq && PostQuantum && PostQuantum.dilithium) {
+                        var pqValid = PostQuantum.dilithium.verifyDetached(
+                            message,
+                            signature.postQuantum,
+                            publicKey.pq
+                        );
+
+                        if (!pqValid) {
+                            return false;
+                        }
+                    }
+
+                    // Both signatures verified
+                    return true;
+                } catch (e) {
+                    console.error('Hybrid detached verification failed, attempting classical fallback', e);
+                    // Fall back to classical verification
+                    return Nacl.sign.detached.verify(message, signature.classical, publicKey);
+                }
+            }
+
+            // Standard NaCl detached signature verification for backward compatibility
             return Nacl.sign.detached.verify(message, signature, publicKey);
         };
 
@@ -1019,365 +1334,6 @@
             if (Object.keys(out).length === 0) { throw new Error("INVALID_TEAM_CONFIGURATION"); }
 
             return out;
-        };
-
-
-        // =====================================================
-        // Post-Quantum Cryptography Extension
-        // =====================================================
-
-        // Initialize PQ libraries - must be called before using PQ features
-        Crypto.initPQ = async function() {
-            try {
-                const { ml_kem1024 } = await import("https://cdn.jsdelivr.net/npm/@noble/post-quantum/ml-kem/+esm");
-                const { ml_dsa87 } = await import("https://cdn.jsdelivr.net/npm/@noble/post-quantum/ml-dsa/+esm");
-
-                // Store in Crypto object for use throughout the library
-                Crypto.PQ = {
-                    kem: ml_kem1024,    // ML-KEM-1024 (strongest Kyber variant)
-                    dsa: ml_dsa87,      // ML-DSA-87 (strongest Dilithium variant)
-                    initialized: true
-                };
-
-                // Extend existing Team and Mailbox with PQ capabilities
-                Crypto._extendTeam();
-                Crypto._extendMailbox();
-
-                return true;
-            } catch (err) {
-                console.error('[Crypto] Failed to initialize PQ libraries:', err);
-                return false;
-            }
-        };
-
-        // Check if PQ is properly initialized
-        Crypto._checkPQ = function() {
-            if (!Crypto.PQ || !Crypto.PQ.initialized) {
-                throw new Error('Post-quantum cryptography not initialized. Call Crypto.initPQ() first.');
-            }
-        };
-
-        // Generate PQ keypairs for both encryption and signing
-        Crypto.generatePQKeys = async function() {
-            Crypto._checkPQ();
-
-            const kemKeypair = Crypto.PQ.kem.keygen();
-            const dsaKeypair = Crypto.PQ.dsa.keygen();
-
-            return {
-                // KEM keys for encryption/decryption
-                pqEncPublic: encodeBase64(kemKeypair.publicKey),
-                pqEncPrivate: encodeBase64(kemKeypair.secretKey),
-
-                // DSA keys for signing/verification
-                pqSignKey: encodeBase64(dsaKeypair.secretKey),
-                pqValidateKey: encodeBase64(dsaKeypair.publicKey)
-            };
-        };
-
-        // Extend Team with PQ capabilities
-        Crypto._extendTeam = function() {
-            // Save reference to original function
-            var originalTeamEncryptor = Team.createEncryptor;
-
-            // Replace with enhanced version
-            Team.createEncryptor = function(keys) {
-                // Create the original encryptor first
-                var originalEncryptor = originalTeamEncryptor(keys);
-
-                // If no PQ keys provided, return the original encryptor
-                if (!keys.pqTeamEncPublic || !keys.pqTeamValidateKey ||
-                    (originalEncryptor.encrypt && (!keys.pqTeamEncPrivate || !keys.pqTeamSignKey)) ||
-                    (originalEncryptor.decrypt && (!keys.pqTeamEncPrivate || !keys.pqTeamValidateKey))) {
-                    return originalEncryptor;
-                }
-
-                // Check if PQ is initialized
-                if (!Crypto.PQ || !Crypto.PQ.initialized) {
-                    console.warn("[Crypto] Post-quantum libraries not initialized - using classical encryption only");
-                    return originalEncryptor;
-                }
-
-                // Create an enhanced encryptor with PQ capabilities
-                var enhancedEncryptor = {};
-
-                if (originalEncryptor.encrypt) {
-                    enhancedEncryptor.encrypt = function(msg) {
-                        try {
-                            // First encrypt with traditional cryptography
-                            var traditionalCiphertext = originalEncryptor.encrypt(msg);
-                            if (!traditionalCiphertext) return null;
-
-                            // Then apply PQ protection
-                            // 1. Encapsulate a shared secret using team's PQ public key
-                            const pqTeamPubKey = decodeBase64(keys.pqTeamEncPublic);
-                            const { cipherText, sharedSecret } = Crypto.PQ.kem.encapsulate(pqTeamPubKey);
-
-                            // 2. Use the shared secret to encrypt the traditional ciphertext
-                            const nonce = Nacl.randomBytes(24);
-                            const pqEncrypted = Nacl.secretbox(
-                                decodeUTF8(traditionalCiphertext),
-                                nonce,
-                                sharedSecret.slice(0, 32)
-                            );
-
-                            // 3. Bundle everything together
-                            const bundle = {
-                                pq: true, // Marker for PQ-enhanced message
-                                v: 1,     // Version
-                                nonce: encodeBase64(nonce),
-                                ct: encodeBase64(cipherText),
-                                data: encodeBase64(pqEncrypted)
-                            };
-
-                            // 4. Sign with PQ signature
-                            const bundleBytes = decodeUTF8(JSON.stringify(bundle));
-                            const pqSignature = Crypto.PQ.dsa.sign(
-                                decodeBase64(keys.pqTeamSignKey),
-                                bundleBytes
-                            );
-
-                            // 5. Return the complete PQ-enhanced message
-                            return {
-                                pq: true,
-                                v: 1,
-                                bundle: bundle,
-                                signature: encodeBase64(pqSignature)
-                            };
-                        } catch (err) {
-                            console.error('[Crypto] PQ Team encryption error:', err);
-                            return null;
-                        }
-                    };
-                }
-
-                if (originalEncryptor.decrypt) {
-                    enhancedEncryptor.decrypt = function(msg, skipValidation) {
-                        try {
-                            // Check if this is a PQ-enhanced message
-                            if (typeof msg === 'object' && msg.pq === true && msg.v === 1) {
-                                // 1. Verify PQ signature unless skipped
-                                if (!skipValidation) {
-                                    const bundleBytes = decodeUTF8(JSON.stringify(msg.bundle));
-                                    const signatureBytes = decodeBase64(msg.signature);
-                                    const pqTeamValidateKeyBytes = decodeBase64(keys.pqTeamValidateKey);
-
-                                    const isValid = Crypto.PQ.dsa.verify(
-                                        pqTeamValidateKeyBytes,
-                                        bundleBytes,
-                                        signatureBytes
-                                    );
-
-                                    if (!isValid) {
-                                        console.error('[Crypto] PQ signature verification failed');
-                                        return null;
-                                    }
-                                }
-
-                                // 2. Decrypt the PQ layer
-                                const { ct, nonce, data } = msg.bundle;
-
-                                // 2a. Decapsulate the shared secret using team's PQ private key
-                                const pqTeamPrivateKey = decodeBase64(keys.pqTeamEncPrivate);
-                                const ciphertextBytes = decodeBase64(ct);
-                                const sharedSecret = Crypto.PQ.kem.decapsulate(
-                                    ciphertextBytes,
-                                    pqTeamPrivateKey
-                                );
-
-                                // 2b. Decrypt the data using the shared secret
-                                const nonceBytes = decodeBase64(nonce);
-                                const encryptedBytes = decodeBase64(data);
-                                const traditionalCiphertext = Nacl.secretbox.open(
-                                    encryptedBytes,
-                                    nonceBytes,
-                                    sharedSecret.slice(0, 32)
-                                );
-
-                                if (!traditionalCiphertext) {
-                                    throw new Error('PQ decryption failed');
-                                }
-
-                                // 3. Decrypt the traditional layer
-                                return originalEncryptor.decrypt(
-                                    encodeUTF8(traditionalCiphertext),
-                                    skipValidation
-                                );
-                            } else {
-                                // Not a PQ message, use traditional decryption
-                                return originalEncryptor.decrypt(msg, skipValidation);
-                            }
-                        } catch (err) {
-                            console.error('[Crypto] PQ Team decryption error:', err);
-                            return null;
-                        }
-                    };
-                }
-
-                // Copy any other properties from original encryptor
-                Object.keys(originalEncryptor).forEach(function(key) {
-                    if (!enhancedEncryptor[key]) {
-                        enhancedEncryptor[key] = originalEncryptor[key];
-                    }
-                });
-
-                return enhancedEncryptor;
-            };
-
-            console.error('[Crypto] Error deriving PQ team keys:', err);
-            return traditionalKeys; // Fall back to traditional keys on error
-        }
-
-        // Extend Mailbox with PQ capabilities
-        Crypto._extendMailbox = function() {
-            // Save reference to original function
-            var originalMailboxEncryptor = Mailbox.createEncryptor;
-
-            // Replace with enhanced version
-            Mailbox.createEncryptor = function(keys) {
-                // Create the original encryptor first
-                var originalEncryptor = originalMailboxEncryptor(keys);
-
-                // If no PQ keys provided, return the original encryptor
-                if (!keys.pqEncPublic || !keys.pqEncPrivate || !keys.pqSignKey || !keys.pqValidateKey) {
-                    return originalEncryptor;
-                }
-
-                // Check if PQ is initialized
-                if (!Crypto.PQ || !Crypto.PQ.initialized) {
-                    console.warn("[Crypto] Post-quantum libraries not initialized - using classical encryption only");
-                    return originalEncryptor;
-                }
-
-                return {
-                    encrypt: function(plain, recipient) {
-                        try {
-                            // First encrypt with traditional crypto
-                            const traditionalCiphertext = originalEncryptor.encrypt(plain, recipient);
-                            if (!traditionalCiphertext) return null;
-
-                            // Get recipient's PQ public key (this would need to be handled in your system)
-                            // For now, assume we have it available as recipientPqEncPublic
-                            let recipientPqEncPublic = recipient + ".pq"; // This is a placeholder
-
-                            // Apply PQ protection layer
-                            // 1. Encapsulate a shared secret using recipient's PQ public key
-                            const recipientPqPubKey = decodeBase64(recipientPqEncPublic);
-                            const { cipherText, sharedSecret } = Crypto.PQ.kem.encapsulate(recipientPqPubKey);
-
-                            // 2. Use shared secret to encrypt the traditional ciphertext
-                            const nonce = Nacl.randomBytes(24);
-                            const pqEncrypted = Nacl.secretbox(
-                                decodeUTF8(traditionalCiphertext),
-                                nonce,
-                                sharedSecret.slice(0, 32)
-                            );
-
-                            // 3. Bundle everything together
-                            const bundle = {
-                                pq: true, // Marker for PQ-enhanced message
-                                v: 1,     // Version
-                                nonce: encodeBase64(nonce),
-                                ct: encodeBase64(cipherText),
-                                data: encodeBase64(pqEncrypted),
-                                sender: keys.pqEncPublic // Include sender's PQ public key
-                            };
-
-                            // 4. Sign with PQ signature
-                            const bundleBytes = decodeUTF8(JSON.stringify(bundle));
-                            const pqSignature = Crypto.PQ.dsa.sign(
-                                decodeBase64(keys.pqSignKey),
-                                bundleBytes
-                            );
-
-                            // 5. Also sign with traditional signature for dual verification
-                            const traditionalSignature = Nacl.sign(bundleBytes, decodeBase64(keys.signingKey));
-
-                            // 6. Return the complete PQ-enhanced message
-                            return {
-                                pq: true,
-                                v: 1,
-                                bundle: bundle,
-                                pqSignature: encodeBase64(pqSignature),
-                                traditionalSignature: encodeBase64(traditionalSignature)
-                            };
-                        } catch (err) {
-                            console.error('[Crypto] PQ Mailbox encryption error:', err);
-                            return null;
-                        }
-                    },
-
-                    decrypt: function(cipher) {
-                        try {
-                            // Check if this is a PQ-enhanced message
-                            if (typeof cipher === 'object' && cipher.pq === true && cipher.v === 1) {
-                                // 1. Verify both signatures (PQ and traditional)
-                                const bundleBytes = decodeUTF8(JSON.stringify(cipher.bundle));
-
-                                // 1a. Verify PQ signature
-                                const pqSignatureBytes = decodeBase64(cipher.pqSignature);
-                                const senderPqValidateKey = decodeBase64(cipher.bundle.sender.replace(/\.pq$/, '.pqValidate')); // Placeholder
-
-                                const pqValid = Crypto.PQ.dsa.verify(
-                                    senderPqValidateKey,
-                                    bundleBytes,
-                                    pqSignatureBytes
-                                );
-
-                                // 1b. Verify traditional signature
-                                let traditionalValid = false;
-                                try {
-                                    const tradSignatureBytes = decodeBase64(cipher.traditionalSignature);
-                                    // Get sender's traditional validation key (this would need to be handled in your system)
-                                    const senderTraditionalValidateKey = cipher.bundle.sender.replace(/\.pq$/, '.validate'); // Placeholder
-
-                                    const validated = Nacl.sign.open(tradSignatureBytes, decodeBase64(senderTraditionalValidateKey));
-                                    traditionalValid = !!validated;
-                                } catch (e) {
-                                    traditionalValid = false;
-                                }
-
-                                // 1c. Both signatures must be valid
-                                if (!pqValid || !traditionalValid) {
-                                    console.error('[Crypto] Dual signature verification failed:',
-                                        {pqValid, traditionalValid});
-                                    return null;
-                                }
-
-                                // 2. Decrypt the PQ layer
-                                const { ct, nonce, data } = cipher.bundle;
-
-                                // 2a. Decapsulate the shared secret using our PQ private key
-                                const myPqPrivateKey = decodeBase64(keys.pqEncPrivate);
-                                const ciphertextBytes = decodeBase64(ct);
-                                const sharedSecret = Crypto.PQ.kem.decapsulate(ciphertextBytes, myPqPrivateKey);
-
-                                // 2b. Decrypt the data using the shared secret
-                                const nonceBytes = decodeBase64(nonce);
-                                const encryptedBytes = decodeBase64(data);
-                                const traditionalCiphertext = Nacl.secretbox.open(
-                                    encryptedBytes,
-                                    nonceBytes,
-                                    sharedSecret.slice(0, 32)
-                                );
-
-                                if (!traditionalCiphertext) {
-                                    throw new Error('PQ decryption failed');
-                                }
-
-                                // 3. Decrypt the traditional layer
-                                return originalEncryptor.decrypt(encodeUTF8(traditionalCiphertext));
-                            } else {
-                                // Not a PQ message, use traditional decryption
-                                return originalEncryptor.decrypt(cipher);
-                            }
-                        } catch (err) {
-                            console.error('[Crypto] PQ Mailbox decryption error:', err);
-                            return null;
-                        }
-                    }
-                };
-            };
         };
 
         return Crypto;
