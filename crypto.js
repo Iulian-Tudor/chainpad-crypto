@@ -32,102 +32,7 @@
             };
         */
 
-
-        var Hybrid = Crypto.Hybrid = {};
-
-        // Key derivation function (KDF) to combine classical and post-quantum keys
-        Hybrid.deriveKey = function(k1, k2) {
-            // Simple KDF: Use hash of concatenated keys. TO BE replaced with a proper one
-            return Nacl.hash(new Uint8Array([...k1, ...k2])).slice(0, 32);
-        };
-
-        // Generate hybrid keypair (classical + post-quantum)
-        Hybrid.generateKeypair = function() {
-            var classicalKeyPair = Nacl.box.keyPair();
-            var pqKeyPair = PostQuantum.ml_kem1024.keygen();
-
-            return {
-                classical: {
-                    publicKey: classicalKeyPair.publicKey,
-                    secretKey: classicalKeyPair.secretKey
-                },
-                postQuantum: {
-                    publicKey: pqKeyPair.publicKey,
-                    secretKey: pqKeyPair.secretKey
-                }
-            };
-        };
-
-        // Layered encryption (classical then post-quantum)
-        Hybrid.encrypt = function(message, classicalPubKey, pqPubKey) {
-            // First layer: encrypt with classical encryption
-            var nonce = Nacl.randomBytes(24);
-            var classicalCiphertext = Nacl.box(message, nonce, classicalPubKey, Nacl.box.keyPair().secretKey);
-
-            // Second layer: encrypt the first ciphertext with post-quantum
-            var pqResult = PostQuantum.ml_kem1024.encapsulate(pqPubKey);
-            var sharedSecret = pqResult.sharedSecret;
-
-            // Use the shared secret to encrypt the classical ciphertext
-            var secondLayerNonce = Nacl.randomBytes(24);
-            var secondLayerCiphertext = Nacl.secretbox(classicalCiphertext, secondLayerNonce, sharedSecret);
-
-            // Return all necessary components for decryption
-            return {
-                nonce: nonce,
-                secondLayerNonce: secondLayerNonce,
-                ciphertext: secondLayerCiphertext,
-                pqCiphertext: pqResult.cipherText
-            };
-        };
-
-        // Layered decryption (post-quantum then classical)
-        Hybrid.decrypt = function(hybrid, classicalPubKey, classicalSecretKey, pqSecretKey) {
-            // First, decrypt the outer post-quantum layer
-            var sharedSecret = PostQuantum.ml_kem1024.decapsulate(hybrid.pqCiphertext, pqSecretKey);
-
-            // Decrypt the inner layer to get the classical ciphertext
-            var classicalCiphertext = Nacl.secretbox.open(hybrid.ciphertext, hybrid.secondLayerNonce, sharedSecret);
-            if (!classicalCiphertext) {
-                return null; // Decryption failed
-            }
-
-            // Finally decrypt the classical layer
-            return Nacl.box.open(classicalCiphertext, hybrid.nonce, classicalPubKey, classicalSecretKey);
-        };
-
-        // Key encapsulation mechanism (KEM) for hybrid cryptography
-        Hybrid.encapsulate = function(classicalPubKey, pqPubKey) {
-            // Generate classical shared secret
-            var classicalEphemeralKey = Nacl.box.keyPair();
-            var classicalSharedSecret = Nacl.box.before(classicalPubKey, classicalEphemeralKey.secretKey);
-
-            // Generate post-quantum shared secret
-            var pqResult = PostQuantum.ml_kem1024.encapsulate(pqPubKey);
-
-            // Combine the shared secrets
-            var finalSharedSecret = Hybrid.deriveKey(classicalSharedSecret, pqResult.sharedSecret);
-
-            return {
-                sharedSecret: finalSharedSecret,
-                classicalPubKey: classicalEphemeralKey.publicKey,
-                pqCiphertext: pqResult.cipherText
-            };
-        };
-
-        // Decapsulation for hybrid KEM
-        Hybrid.decapsulate = function(encapsulation, classicalSecretKey, pqSecretKey) {
-            // Recover classical shared secret
-            var classicalSharedSecret = Nacl.box.before(encapsulation.classicalPubKey, classicalSecretKey);
-
-            // Recover post-quantum shared secret
-            var pqSharedSecret = PostQuantum.ml_kem1024.decapsulate(encapsulation.pqCiphertext, pqSecretKey);
-
-            // Derive final shared key
-            return Hybrid.deriveKey(classicalSharedSecret, pqSharedSecret);
-        };
-
-        // Nacl Abstractions
+        // Random generation namespace
         var Random = Crypto.Random = {};
 
         Random.decodeBase64 = decodeBase64;
@@ -224,138 +129,29 @@
         // Box encryption and decryption abstraction
         var Box = Crypto.Box = {};
 
-        // Hybrid Box encryption
+        // Box encryption
         Box.encrypt = function(message, nonce, theirPublicKey, mySecretKey) {
-            // Original NaCl box encryption
-            var classicalCiphertext = Nacl.box(message, nonce, theirPublicKey, mySecretKey);
-
-            // If post-quantum is not available, use only classical
-            if (!PostQuantum || !PostQuantum.ml_kem1024) {
-                return classicalCiphertext;
-            }
-
-            try {
-                // Generate a random key for post-quantum encryption
-                var pqNonce = Nacl.randomBytes(24);
-
-                // Use post-quantum to encrypt the classical ciphertext
-                // Note: This is a simplified example; in a real implementation,
-                // you'd use proper KEM with Kyber
-                var pqCiphertext = PostQuantum.ml_kem1024.encrypt(classicalCiphertext, theirPublicKey.pq || theirPublicKey);
-
-                // Return combined ciphertext
-                return {
-                    classical: classicalCiphertext,
-                    postQuantum: pqCiphertext,
-                    pqNonce: pqNonce
-                };
-            } catch (e) {
-                console.error('Post-quantum encryption failed, falling back to classical', e);
-                return classicalCiphertext;
-            }
+            return Nacl.box(message, nonce, theirPublicKey, mySecretKey);
         };
 
-        // Hybrid Box decryption
+        // Box decryption
         Box.decrypt = function(ciphertext, nonce, theirPublicKey, mySecretKey) {
-            // If it's a hybrid ciphertext object
-            if (ciphertext && typeof ciphertext === 'object' && ciphertext.classical && ciphertext.postQuantum) {
-                try {
-                    // First decrypt the post-quantum layer
-                    var classicalCiphertext = PostQuantum.ml_kem1024.decrypt(
-                        ciphertext.postQuantum,
-                        mySecretKey.pq || mySecretKey
-                    );
-
-                    // Then decrypt the classical layer
-                    return Nacl.box.open(
-                        classicalCiphertext,
-                        nonce,
-                        theirPublicKey.classical || theirPublicKey,
-                        mySecretKey.classical || mySecretKey
-                    );
-                } catch (e) {
-                    console.error('Hybrid decryption failed, attempting classical fallback', e);
-                    // Fall back to classical decryption
-                    return Nacl.box.open(ciphertext.classical, nonce, theirPublicKey, mySecretKey);
-                }
-            }
-
-            // Standard NaCl box decryption for backward compatibility
             return Nacl.box.open(ciphertext, nonce, theirPublicKey, mySecretKey);
         };
 
         // Box.after encryption
         Box.encryptAfter = function(message, nonce, sharedSecret) {
-            // If it's a hybrid shared secret (from Hybrid.encapsulate)
-            if (sharedSecret && typeof sharedSecret === 'object' && sharedSecret.classical && sharedSecret.postQuantum) {
-                var classicalCiphertext = Nacl.box.after(message, nonce, sharedSecret.classical);
-
-                try {
-                    // Use the post-quantum shared secret to encrypt the classical ciphertext
-                    var pqCiphertext = PostQuantum.ml_kem1024.encrypt(classicalCiphertext, sharedSecret.postQuantum);
-
-                    return {
-                        classical: classicalCiphertext,
-                        postQuantum: pqCiphertext
-                    };
-                } catch (e) {
-                    console.error('Post-quantum encryption failed in encryptAfter, falling back to classical', e);
-                    return classicalCiphertext;
-                }
-            }
-
-            // Standard NaCl box.after encryption for backward compatibility
             return Nacl.box.after(message, nonce, sharedSecret);
         };
 
         // Box.after decryption
         Box.decryptAfter = function(ciphertext, nonce, sharedSecret) {
-            // If it's a hybrid ciphertext
-            if (ciphertext && typeof ciphertext === 'object' && ciphertext.classical && ciphertext.postQuantum) {
-                try {
-                    // First decrypt the post-quantum layer
-                    var classicalCiphertext = PostQuantum.ml_kem1024.decrypt(
-                        ciphertext.postQuantum,
-                        sharedSecret.postQuantum
-                    );
-
-                    // Then decrypt the classical layer
-                    return Nacl.box.open.after(classicalCiphertext, nonce, sharedSecret.classical);
-                } catch (e) {
-                    console.error('Hybrid decryption failed in decryptAfter, attempting classical fallback', e);
-                    return Nacl.box.open.after(ciphertext.classical, nonce, sharedSecret);
-                }
-            }
-
-            // Standard NaCl box.open.after decryption for backward compatibility
             return Nacl.box.open.after(ciphertext, nonce, sharedSecret);
         };
 
-        // Box shared secret creation - hybrid approach
+        // Box shared secret creation
         Box.getSharedSecret = function(theirPublicKey, mySecretKey) {
-            // Classical shared secret
-            var classicalSharedSecret = Nacl.box.before(theirPublicKey, mySecretKey);
-
-            // If post-quantum is not available or keys aren't compatible, return only classical
-            if (!PostQuantum || !PostQuantum.kyber ||
-                !theirPublicKey.pq || !mySecretKey.pq) {
-                return classicalSharedSecret;
-            }
-
-            try {
-                // Post-quantum shared secret
-                var pqResult = PostQuantum.kyber.encapsulate(theirPublicKey.pq);
-
-                // Combine both secrets
-                return {
-                    classical: classicalSharedSecret,
-                    postQuantum: pqResult.sharedSecret,
-                    pqCiphertext: pqResult.ciphertext
-                };
-            } catch (e) {
-                console.error('Post-quantum key exchange failed, falling back to classical', e);
-                return classicalSharedSecret;
-            }
+            return Nacl.box.before(theirPublicKey, mySecretKey);
         };
 
         // SecretBox (symmetric) encryption/decryption abstraction
@@ -374,134 +170,23 @@
         // Signature abstraction
         var Sign = Crypto.Sign = {};
 
-        // Sign a message - hybrid approach (classical + post-quantum)
+        // Sign a message
         Sign.sign = function(message, secretKey) {
-            // Classical signature
-            var classicalSignature = Nacl.sign(message, secretKey);
-
-            // If post-quantum is not available or we don't have PQ keys, return only classical
-            if (!PostQuantum || !PostQuantum.dilithium || !secretKey.pq) {
-                return classicalSignature;
-            }
-
-            try {
-                // Post-quantum signature
-                var pqSignature = PostQuantum.dilithium.sign(message, secretKey.pq);
-
-                // Return both signatures
-                return {
-                    classical: classicalSignature,
-                    postQuantum: pqSignature
-                };
-            } catch (e) {
-                console.error('Post-quantum signing failed, falling back to classical', e);
-                return classicalSignature;
-            }
+            return Nacl.sign(message, secretKey);
         };
 
-        // Verify a signature - hybrid approach
+        // Verify a signature
         Sign.verify = function(signedMessage, publicKey) {
-            // If it's a hybrid signature object
-            if (signedMessage && typeof signedMessage === 'object' &&
-                signedMessage.classical && signedMessage.postQuantum) {
-                try {
-                    // Verify both classical and post-quantum signatures
-                    var classicalValid = Nacl.sign.open(signedMessage.classical, publicKey);
-
-                    if (!classicalValid) {
-                        return false;
-                    }
-
-                    // If we have PQ keys, also verify PQ signature
-                    if (publicKey.pq && PostQuantum && PostQuantum.dilithium) {
-                        var pqValid = PostQuantum.dilithium.verify(
-                            signedMessage.postQuantum,
-                            publicKey.pq
-                        );
-
-                        if (!pqValid) {
-                            return false;
-                        }
-                    }
-
-                    // Both signatures verified
-                    return classicalValid;
-                } catch (e) {
-                    console.error('Hybrid verification failed, attempting classical fallback', e);
-                    // Fall back to classical verification
-                    return Nacl.sign.open(signedMessage.classical, publicKey);
-                }
-            }
-
-            // Standard NaCl signature verification for backward compatibility
             return Nacl.sign.open(signedMessage, publicKey);
         };
 
-        // Detached sign - hybrid approach
+        // Detached sign
         Sign.detached = function(message, secretKey) {
-            // Classical detached signature
-            var classicalSignature = Nacl.sign.detached(message, secretKey);
-
-            // If post-quantum is not available or we don't have PQ keys, return only classical
-            if (!PostQuantum || !PostQuantum.dilithium || !secretKey.pq) {
-                return classicalSignature;
-            }
-
-            try {
-                // Post-quantum detached signature
-                var pqSignature = PostQuantum.dilithium.signDetached(message, secretKey.pq);
-
-                // Return both signatures
-                return {
-                    classical: classicalSignature,
-                    postQuantum: pqSignature
-                };
-            } catch (e) {
-                console.error('Post-quantum detached signing failed, falling back to classical', e);
-                return classicalSignature;
-            }
+            return Nacl.sign.detached(message, secretKey);
         };
 
-        // Verify detached - hybrid approach
+        // Verify detached
         Sign.verifyDetached = function(signature, message, publicKey) {
-            // If it's a hybrid signature object
-            if (signature && typeof signature === 'object' &&
-                signature.classical && signature.postQuantum) {
-                try {
-                    // Verify both classical and post-quantum signatures
-                    var classicalValid = Nacl.sign.detached.verify(
-                        message,
-                        signature.classical,
-                        publicKey
-                    );
-
-                    if (!classicalValid) {
-                        return false;
-                    }
-
-                    // If we have PQ keys, also verify PQ signature
-                    if (publicKey.pq && PostQuantum && PostQuantum.dilithium) {
-                        var pqValid = PostQuantum.dilithium.verifyDetached(
-                            message,
-                            signature.postQuantum,
-                            publicKey.pq
-                        );
-
-                        if (!pqValid) {
-                            return false;
-                        }
-                    }
-
-                    // Both signatures verified
-                    return true;
-                } catch (e) {
-                    console.error('Hybrid detached verification failed, attempting classical fallback', e);
-                    // Fall back to classical verification
-                    return Nacl.sign.detached.verify(message, signature.classical, publicKey);
-                }
-            }
-
-            // Standard NaCl detached signature verification for backward compatibility
             return Nacl.sign.detached.verify(message, signature, publicKey);
         };
 
@@ -1352,4 +1037,3 @@
         window.chainpad_crypto = factory(window.nacl);
     }
 }());
-
