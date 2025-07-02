@@ -34,95 +34,95 @@
         */
 
         // Random generation namespace
-        var Random = Crypto.Random = {};
+        var AbstractCall = Crypto.AbstractCall = {};
 
-        Random.decodeBase64 = decodeBase64;
-        Random.encodeBase64 = encodeBase64;
+        AbstractCall.decodeBase64 = decodeBase64;
+        AbstractCall.encodeBase64 = encodeBase64;
 
-        Random.decodeUTF8 = decodeUTF8;
-        Random.encodeUTF8 = encodeUTF8;
+        AbstractCall.decodeUTF8 = decodeUTF8;
+        AbstractCall.encodeUTF8 = encodeUTF8;
 
-        Random.signKeyPairFromSeed = function(seed) {
+        AbstractCall.signKeyPairFromSeed = function(seed) {
             return Nacl.sign.keyPair.fromSeed(seed);
         };
 
-        Random.signKeyPairFromSecretKey = function(secretKey) {
+        AbstractCall.signKeyPairFromSecretKey = function(secretKey) {
             return Nacl.sign.keyPair.fromSecretKey(secretKey);
         };
 
-        Random.signKeyPair = function() {
+        AbstractCall.signKeyPair = function() {
             return Nacl.sign.keyPair();
         };
 
-        Random.sign = function(message, secretKey) {
+        AbstractCall.sign = function(message, secretKey) {
             return Nacl.sign(message, secretKey);
         }
 
-        Random.signOpen = function(signedMessage, publicKey) {
+        AbstractCall.signOpen = function(signedMessage, publicKey) {
             return Nacl.sign.open(signedMessage, publicKey);
         }
 
-        Random.signDetached = function(message, secretKey) {
+        AbstractCall.signDetached = function(message, secretKey) {
             return Nacl.sign.detached(message, secretKey);
         }
 
-        Random.verifyDetached = function(signature, message, publicKey) {
+        AbstractCall.verifyDetached = function(signature, message, publicKey) {
             return Nacl.sign.detached.verify(message, signature, publicKey);
         }
 
-        Random.curveKeyPair = function() {
+        AbstractCall.curveKeyPair = function() {
             return Nacl.box.keyPair();
         };
 
-        Random.box = function(message, nonce, theirPublicKey, mySecretKey) {
+        AbstractCall.box = function(message, nonce, theirPublicKey, mySecretKey) {
             return Nacl.box(message, nonce, theirPublicKey, mySecretKey);
         };
 
-        Random.boxOpen = function(ciphertext, nonce, theirPublicKey, mySecretKey) {
+        AbstractCall.boxOpen = function(ciphertext, nonce, theirPublicKey, mySecretKey) {
             return Nacl.box.open(ciphertext, nonce, theirPublicKey, mySecretKey);
         }
 
-        Random.boxKeyPairFromSecretKey = function(secretKey) {
+        AbstractCall.boxKeyPairFromSecretKey = function(secretKey) {
             return Nacl.box.keyPair.fromSecretKey(secretKey);
         };
 
-        Random.secretbox = function(message, nonce, key) {
+        AbstractCall.secretbox = function(message, nonce, key) {
             return Nacl.secretbox(message, nonce, key);
         }
 
-        Random.secretboxOpen = function(ciphertext, nonce, key) {
+        AbstractCall.secretboxOpen = function(ciphertext, nonce, key) {
             return Nacl.secretbox.open(ciphertext, nonce, key);
         };
 
-        Random.createHash = function(data) {
+        AbstractCall.createHash = function(data) {
             return Nacl.hash(data);
         };
 
-        Random.bytes = function(length) {
+        AbstractCall.bytes = function(length) {
             return Nacl.randomBytes(length);
         };
 
-        Random.boxNonceLength = function() {
+        AbstractCall.boxNonceLength = function() {
             return Nacl.box.nonceLength;
         }
 
-        Random.signSeedLength = function() {
+        AbstractCall.signSeedLength = function() {
             return Nacl.sign.seedLength;
         }
 
-        Random.boxKeyLength = function() {
+        AbstractCall.boxKeyLength = function() {
             return Nacl.box.publicKeyLength;
         }
 
-        Random.secretboxKeyLength = function() {
+        AbstractCall.secretboxKeyLength = function() {
             return Nacl.secretbox.keyLength;
         }
 
-        Random.secretboxNonceLength = function() {
+        AbstractCall.secretboxNonceLength = function() {
             return Nacl.secretbox.nonceLength;
         }
 
-        Random.signKeyLength = function() {
+        AbstractCall.signKeyLength = function() {
             return Nacl.sign.publicKeyLength;
         }
 
@@ -194,7 +194,7 @@
 
         var encryptStr = function (str, key) {
             var array = decodeUTF8(str);
-            var nonce = Random.bytes(24);
+            var nonce = AbstractCall.bytes(24);
             var packed = SecretBox.encrypt(array, nonce, key);
             if (!packed) { throw new Error(); }
             return encodeBase64(nonce) + "|" + encodeBase64(packed);
@@ -221,7 +221,7 @@
         var parseKey = Crypto.parseKey = function (str) {
             try {
                 var array = decodeBase64(str);
-                var hash = Random.createHash(array);
+                var hash = AbstractCall.createHash(array);
                 var lk = hash.subarray(32);
                 return {
                     lookupKey: lk,
@@ -235,7 +235,7 @@
         };
 
         var rand64 = Crypto.rand64 = function (bytes) {
-            return encodeBase64(Random.bytes(bytes));
+            return encodeBase64(AbstractCall.bytes(bytes));
         };
 
         Crypto.genKey = function () {
