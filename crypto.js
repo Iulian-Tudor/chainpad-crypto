@@ -1,6 +1,6 @@
 (function () {
     'use strict';
-    var factory = function (Nacl, NaclUtil, PostQuantum) {
+    var factory = function (Nacl, NaclUtil, PostQuantum, Scrypt) {
         var Crypto = {
             Nacl: Nacl,
             PQC: PostQuantum
@@ -33,96 +33,122 @@
             };
         */
 
-        // Random generation namespace
-        var AbstractCall = Crypto.AbstractCall = {};
+        // Post-quantum key derivation using scrypt
+        var deriveSymmetricKey = function (naclKey, kemKey) {
+            if (!naclKey || !kemKey) {
+                throw new Error('Both NaCl and KEM keys required for key derivation');
+            }
 
-        AbstractCall.decodeBase64 = decodeBase64;
-        AbstractCall.encodeBase64 = encodeBase64;
+            var derived = new Uint8Array(32); // 32 bytes for the derived key
 
-        AbstractCall.decodeUTF8 = decodeUTF8;
-        AbstractCall.encodeUTF8 = encodeUTF8;
+            Scrypt(
+                Array.from(u8_concat([naclKey, kemKey])), // passwd
+                Array.from(decodeUTF8('CryptPad.mailbox.pqc.salt')), // salt
+                8, // N (CPU/memory cost parameter)
+                1024,     // r (block size)
+                128,    // dkLen
+                200,   // interruptStep (default is 1k or 1000)
+                function (result) {
+                    for (var i = 0; i < result.length; i++) {
+                        derived[i] = result[i];
+                    }
+                },
+                'binary' // encoding
+            );
 
-        AbstractCall.signKeyPairFromSeed = function(seed) {
+            return derived;
+        };
+
+        // CryptoAgility abstraction of NaCl and other cryptographic operations
+        var CryptoAgility = Crypto.CryptoAgility = {};
+
+        CryptoAgility.decodeBase64 = decodeBase64;
+        CryptoAgility.encodeBase64 = encodeBase64;
+
+        CryptoAgility.decodeUTF8 = decodeUTF8;
+        CryptoAgility.encodeUTF8 = encodeUTF8;
+
+        CryptoAgility.signKeyPairFromSeed = function(seed) {
             return Nacl.sign.keyPair.fromSeed(seed);
         };
 
-        AbstractCall.signKeyPairFromSecretKey = function(secretKey) {
+        CryptoAgility.signKeyPairFromSecretKey = function(secretKey) {
             return Nacl.sign.keyPair.fromSecretKey(secretKey);
         };
 
-        AbstractCall.signKeyPair = function() {
+        CryptoAgility.signKeyPair = function() {
             return Nacl.sign.keyPair();
         };
 
-        AbstractCall.sign = function(message, secretKey) {
+        CryptoAgility.sign = function(message, secretKey) {
             return Nacl.sign(message, secretKey);
         }
 
-        AbstractCall.signOpen = function(signedMessage, publicKey) {
+        CryptoAgility.signOpen = function(signedMessage, publicKey) {
             return Nacl.sign.open(signedMessage, publicKey);
         }
 
-        AbstractCall.signDetached = function(message, secretKey) {
+        CryptoAgility.signDetached = function(message, secretKey) {
             return Nacl.sign.detached(message, secretKey);
         }
 
-        AbstractCall.verifyDetached = function(signature, message, publicKey) {
+        CryptoAgility.verifyDetached = function(signature, message, publicKey) {
             return Nacl.sign.detached.verify(message, signature, publicKey);
         }
 
-        AbstractCall.curveKeyPair = function() {
+        CryptoAgility.curveKeyPair = function() {
             return Nacl.box.keyPair();
         };
 
-        AbstractCall.box = function(message, nonce, theirPublicKey, mySecretKey) {
+        CryptoAgility.box = function(message, nonce, theirPublicKey, mySecretKey) {
             return Nacl.box(message, nonce, theirPublicKey, mySecretKey);
         };
 
-        AbstractCall.boxOpen = function(ciphertext, nonce, theirPublicKey, mySecretKey) {
+        CryptoAgility.boxOpen = function(ciphertext, nonce, theirPublicKey, mySecretKey) {
             return Nacl.box.open(ciphertext, nonce, theirPublicKey, mySecretKey);
         }
 
-        AbstractCall.boxKeyPairFromSecretKey = function(secretKey) {
+        CryptoAgility.boxKeyPairFromSecretKey = function(secretKey) {
             return Nacl.box.keyPair.fromSecretKey(secretKey);
         };
 
-        AbstractCall.secretbox = function(message, nonce, key) {
+        CryptoAgility.secretbox = function(message, nonce, key) {
             return Nacl.secretbox(message, nonce, key);
         }
 
-        AbstractCall.secretboxOpen = function(ciphertext, nonce, key) {
+        CryptoAgility.secretboxOpen = function(ciphertext, nonce, key) {
             return Nacl.secretbox.open(ciphertext, nonce, key);
         };
 
-        AbstractCall.createHash = function(data) {
+        CryptoAgility.createHash = function(data) {
             return Nacl.hash(data);
         };
 
-        AbstractCall.bytes = function(length) {
+        CryptoAgility.bytes = function(length) {
             return Nacl.randomBytes(length);
         };
 
-        AbstractCall.boxNonceLength = function() {
+        CryptoAgility.boxNonceLength = function() {
             return Nacl.box.nonceLength;
         }
 
-        AbstractCall.signSeedLength = function() {
+        CryptoAgility.signSeedLength = function() {
             return Nacl.sign.seedLength;
         }
 
-        AbstractCall.boxKeyLength = function() {
+        CryptoAgility.boxKeyLength = function() {
             return Nacl.box.publicKeyLength;
         }
 
-        AbstractCall.secretboxKeyLength = function() {
+        CryptoAgility.secretboxKeyLength = function() {
             return Nacl.secretbox.keyLength;
         }
 
-        AbstractCall.secretboxNonceLength = function() {
+        CryptoAgility.secretboxNonceLength = function() {
             return Nacl.secretbox.nonceLength;
         }
 
-        AbstractCall.signKeyLength = function() {
+        CryptoAgility.signKeyLength = function() {
             return Nacl.sign.publicKeyLength;
         }
 
@@ -194,7 +220,7 @@
 
         var encryptStr = function (str, key) {
             var array = decodeUTF8(str);
-            var nonce = AbstractCall.bytes(24);
+            var nonce = CryptoAgility.bytes(24);
             var packed = SecretBox.encrypt(array, nonce, key);
             if (!packed) { throw new Error(); }
             return encodeBase64(nonce) + "|" + encodeBase64(packed);
@@ -221,7 +247,7 @@
         var parseKey = Crypto.parseKey = function (str) {
             try {
                 var array = decodeBase64(str);
-                var hash = AbstractCall.createHash(array);
+                var hash = CryptoAgility.createHash(array);
                 var lk = hash.subarray(32);
                 return {
                     lookupKey: lk,
@@ -235,7 +261,7 @@
         };
 
         var rand64 = Crypto.rand64 = function (bytes) {
-            return encodeBase64(AbstractCall.bytes(bytes));
+            return encodeBase64(CryptoAgility.bytes(bytes));
         };
 
         Crypto.genKey = function () {
@@ -584,12 +610,10 @@
 
         var Mailbox = Crypto.Mailbox = {};
 
-        // throws on encryption errors
-        var asymmetric_encrypt = /* Mailbox.asymmetric_encrypt = */ function (u8_plain, keys) {
-            // generate a random nonce
+        // PQC-enhanced asymmetric encryption
+        var pqc_asymmetric_encrypt = function (u8_plain, keys) {
+            // First, do traditional NaCl encryption
             var u8_nonce = Nacl.randomBytes(Nacl.box.nonceLength);
-
-            // basic asymmetric encryption using named parameters to avoid misuse
             var u8_cipher = Nacl.box(
                 u8_plain,
                 u8_nonce,
@@ -597,54 +621,166 @@
                 keys.my_private
             );
 
-            /*  bundle the necessary paramaters into a single Uint8Array.
-                order the nonce first in case we ever want to refer use the first
-                n bytes of a ciphertext to identify messages.  */
             var u8_bundle = u8_concat([
-                u8_nonce, // 24 uint8s
-                keys.my_public, // 32 uint8s
-                u8_cipher, // arbitrary length
+                u8_nonce,
+                keys.my_public,
+                u8_cipher,
             ]);
+
+            // If PQC keys are available, add another layer of encryption
+            if (keys.their_kem_public && Crypto.PQC && Crypto.PQC.ml_kem && Crypto.PQC.ml_kem.ml_kem512) {
+                try {
+                    var kemResult = Crypto.PQC.ml_kem.ml_kem512.encapsulate(keys.their_kem_public);
+                    var kemSharedSecret = kemResult.sharedSecret;
+                    var kemCiphertext = kemResult.ciphertext;
+
+                    // Derive symmetric key from traditional shared secret and KEM shared secret
+                    var traditionalSharedSecret = Nacl.box.before(keys.their_public, keys.my_private);
+                    var symmetricKey = deriveSymmetricKey(traditionalSharedSecret, kemSharedSecret);
+
+                    // Encrypt the bundle with the derived symmetric key
+                    var symNonce = Nacl.randomBytes(Nacl.secretbox.nonceLength);
+                    var symCipher = Nacl.secretbox(u8_bundle, symNonce, symmetricKey);
+
+                    // Bundle with KEM ciphertext
+                    u8_bundle = u8_concat([
+                        new Uint8Array([1]), // PQC flag
+                        kemCiphertext,
+                        symNonce,
+                        symCipher
+                    ]);
+                } catch (e) {
+                    console.warn('PQC encryption failed, falling back to traditional:', e);
+                    // Prepend with flag indicating no PQC
+                    u8_bundle = u8_concat([new Uint8Array([0]), u8_bundle]);
+                }
+            } else {
+                // No PQC available, prepend with flag
+                u8_bundle = u8_concat([new Uint8Array([0]), u8_bundle]);
+            }
 
             return u8_bundle;
         };
 
-        // INTERNAL USE ONLY
-        // throws on decryption errors
-        var asymmetric_decrypt = /* Crypto.asymmetric_decrypt = */ function (u8_bundle, keys) {
-            // parse out the nonce
-            var u8_nonce = u8_slice(u8_bundle, 0, Nacl.box.nonceLength);
+        // PQC-enhanced asymmetric decryption
+        var pqc_asymmetric_decrypt = function (u8_bundle, keys) {
+            // Check PQC flag
+            var pqcFlag = u8_bundle[0];
+            var payload = u8_slice(u8_bundle, 1);
 
-            // parse out the sender's public key
+            if (pqcFlag === 1 && keys.my_kem_private && Crypto.PQC && Crypto.PQC.ml_kem && Crypto.PQC.ml_kem.ml_kem512) {
+                try {
+                    // Extract KEM ciphertext (1568 bytes for ML-KEM-512)
+                    var kemCiphertext = u8_slice(payload, 0, 768);
+                    var symNonce = u8_slice(payload, 768, 768 + Nacl.secretbox.nonceLength);
+                    var symCipher = u8_slice(payload, 768 + Nacl.secretbox.nonceLength);
+
+                    // Decrypt KEM to get shared secret
+                    var kemSharedSecret = Crypto.PQC.ml_kem.ml_kem512.decapsulate(kemCiphertext, keys.my_kem_private);
+
+                    // Recreate the traditional shared secret
+                    var traditionalSharedSecret = Nacl.box.before(keys.their_public || keys.sender_public, keys.my_private);
+
+                    // Derive the same symmetric key
+                    var symmetricKey = deriveSymmetricKey(traditionalSharedSecret, kemSharedSecret);
+
+                    // Decrypt the inner bundle
+                    var innerBundle = Nacl.secretbox.open(symCipher, symNonce, symmetricKey);
+                    if (!innerBundle) {
+                        throw new Error('Failed to decrypt PQC layer');
+                    }
+
+                    payload = innerBundle;
+                } catch (e) {
+                    console.error('PQC decryption failed:', e);
+                    throw new Error('E_PQC_DECRYPTION_FAILURE');
+                }
+            }
+
+            // Now decrypt the traditional NaCl layer
+            var u8_nonce = u8_slice(payload, 0, Nacl.box.nonceLength);
             var u8_sender_public = u8_slice(
-                u8_bundle,
+                payload,
                 Nacl.box.nonceLength,
                 Nacl.box.nonceLength + Nacl.box.publicKeyLength
             );
-
-            // take the remaining ciphertext
             var u8_cipher = u8_slice(
-                u8_bundle,
+                payload,
                 Nacl.box.nonceLength + Nacl.box.publicKeyLength
             );
 
-            // decrypt the ciphertext using the private key
             var u8_plain = Nacl.box.open(
                 u8_cipher,
                 u8_nonce,
-                keys.their_public || u8_sender_public,
+                keys.their_public || u8_sender_public,
                 keys.my_private
             );
 
             if (!u8_plain) { throw new Error('E_DECRYPTION_FAILURE'); }
 
-            // return the ciphertext and sender's public key
             return {
                 content: u8_plain,
                 author: u8_sender_public,
             };
         };
 
+        // PQC-enhanced message signing
+        var pqc_sign_message = function (message, keys) {
+            // Traditional NaCl signature
+            var naclSig = Nacl.sign(message, keys.signingKey);
+
+            // Add ML-DSA signature if available
+            if (keys.dsaPrivate && Crypto.PQC && Crypto.PQC.ml_dsa && Crypto.PQC.ml_dsa.ml_dsa44) {
+                try {
+                    var mlDsaSig = Crypto.PQC.ml_dsa.ml_dsa44.sign(keys.dsaPrivate, message);
+                    // Combine signatures: [naclSig][mlDsaSig]
+                    return u8_concat([naclSig, mlDsaSig]);
+                } catch (e) {
+                    console.warn('ML-DSA signing failed, using only NaCl:', e);
+                }
+            }
+
+            return naclSig;
+        };
+
+        // PQC-enhanced signature verification
+        var pqc_verify_signature = function (signedMessage, validateKeys) {
+            // Check if we have both signatures
+            var naclSigLength = 64;
+            var mlDsaSigLength = 2420; // ML-DSA-44 signature length
+
+            if (signedMessage.length >= naclSigLength + mlDsaSigLength &&
+                validateKeys.dsaPublic &&
+                Crypto.PQC && Crypto.PQC.ml_dsa && Crypto.PQC.ml_dsa.ml_dsa44) {
+
+                try {
+                    // Extract both signatures
+                    var naclPortion = u8_slice(signedMessage, 0, naclSigLength + signedMessage.length - naclSigLength - mlDsaSigLength);
+                    var mlDsaSig = u8_slice(signedMessage, signedMessage.length - mlDsaSigLength);
+                    var originalMessage = u8_slice(signedMessage, naclSigLength, signedMessage.length - mlDsaSigLength);
+
+                    // Verify NaCl signature
+                    var naclResult = Nacl.sign.open(naclPortion, validateKeys.validateKey);
+                    if (!naclResult) {
+                        return null;
+                    }
+
+                    // Verify ML-DSA signature
+                    var mlDsaValid = Crypto.PQC.ml_dsa.ml_dsa44.verify(validateKeys.dsaPublic, originalMessage, mlDsaSig);
+                    if (!mlDsaValid) {
+                        return null;
+                    }
+
+                    return originalMessage;
+                } catch (e) {
+                    console.error('PQC signature verification failed:', e);
+                    return null;
+                }
+            }
+
+            // Fall back to traditional NaCl verification
+            return Nacl.sign.open(signedMessage, validateKeys.validateKey);
+        };
 
         // basically acts like an envelope marked only with a delivery address
         var sealSecretLetter = Mailbox.sealSecretLetter = function (plain, keys) {
@@ -652,8 +788,9 @@
             var u8_plain = decodeUTF8(plain);
 
             // encrypt with your permanent private key and the mailbox's public key
-            var u8_letter = asymmetric_encrypt(u8_plain, {
+            var u8_letter = pqc_asymmetric_encrypt(u8_plain, {
                 their_public: keys.their_public,
+                their_kem_public: keys.their_kem_public,
                 my_private: keys.my_private,
                 my_public: keys.my_public,
             });
@@ -662,14 +799,20 @@
             var u8_ephemeral_keypair = keys.ephemeral_keypair || Nacl.box.keyPair();
 
             // seal with an ephemeral key
-            var u8_sealed = asymmetric_encrypt(u8_letter, {
+            var u8_sealed = pqc_asymmetric_encrypt(u8_letter, {
                 their_public: keys.their_public,
+                their_kem_public: keys.their_kem_public,
                 my_private: u8_ephemeral_keypair.secretKey,
                 my_public: u8_ephemeral_keypair.publicKey,
             });
 
-            // if we have a signing key, also sign the message
-            if (keys.signingKey) { u8_sealed = Nacl.sign(u8_sealed, keys.signingKey); }
+            // if we have signing keys, also sign the message with PQC
+            if (keys.signingKey) {
+                u8_sealed = pqc_sign_message(u8_sealed, {
+                    signingKey: keys.signingKey,
+                    dsaPrivate: keys.dsaPrivate
+                });
+            }
 
             // return the doubly-encrypted 'envelope' as a base64-encoded string
             return encodeBase64(u8_sealed);
@@ -679,20 +822,28 @@
             // transform the b64 ciphertext into a Uint8Array
             var u8_bundle = decodeBase64(b64_bundle);
 
-            // If the message is signed, remove the signature
-            // NOTE: no need to check the signature, it's already done serverside
-            if (keys.validateKey) { u8_bundle = u8_bundle.subarray(64); }
+            // If the message is signed, verify and remove the signature
+            if (keys.validateKey) {
+                u8_bundle = pqc_verify_signature(u8_bundle, {
+                    validateKey: keys.validateKey,
+                    dsaPublic: keys.dsaPublic
+                });
+                if (!u8_bundle) {
+                    throw new Error('E_SIGNATURE_VERIFICATION_FAILED');
+                }
+            }
 
             // open the sealed envelope with your ephemeral private key
-            // and throw away the ephemeral key used to seal it
-            var letter = asymmetric_decrypt(u8_bundle, {
+            var letter = pqc_asymmetric_decrypt(u8_bundle, {
                 my_private: keys.ephemeral_private,
+                my_kem_private: keys.ephemeral_kem_private,
                 their_public: keys.their_public
             });
 
             // read the internal content, remember its author
-            var u8_plain = asymmetric_decrypt(letter.content, {
+            var u8_plain = pqc_asymmetric_decrypt(letter.content, {
                 my_private: keys.my_private,
+                my_kem_private: keys.my_kem_private,
                 their_public: keys.their_public
             });
 
@@ -707,18 +858,27 @@
             // transform the b64 ciphertext into a Uint8Array
             var u8_bundle = decodeBase64(b64_bundle);
 
-            // If the message is signed, remove the signature
-            if (keys.validateKey) { u8_bundle = u8_bundle.subarray(64); }
+            // If the message is signed, verify and remove the signature
+            if (keys.validateKey) {
+                u8_bundle = pqc_verify_signature(u8_bundle, {
+                    validateKey: keys.validateKey,
+                    dsaPublic: keys.dsaPublic
+                });
+                if (!u8_bundle) {
+                    throw new Error('E_SIGNATURE_VERIFICATION_FAILED');
+                }
+            }
 
             // open the sealed envelope with your private key
-            // and throw away the ephemeral key used to seal it
-            var letter = asymmetric_decrypt(u8_bundle, {
+            var letter = pqc_asymmetric_decrypt(u8_bundle, {
                 my_private: keys.my_private,
+                my_kem_private: keys.my_kem_private,
             });
 
             // read the internal content, remember its author
-            var u8_plain = asymmetric_decrypt(letter.content, {
+            var u8_plain = pqc_asymmetric_decrypt(letter.content, {
                 my_private: keys.my_private,
+                my_kem_private: keys.my_kem_private,
             });
 
             // return the content and author
@@ -744,29 +904,38 @@
             var u8_my_private = decodeBase64(keys.curvePrivate);
             var u8_my_public = decodeBase64(keys.curvePublic);
 
+            // PQC keys (optional)
+            var u8_my_kem_private = keys.kemPrivate ? decodeBase64(keys.kemPrivate) : undefined;
+            var u8_my_kem_public = keys.kemPublic ? decodeBase64(keys.kemPublic) : undefined;
+
             var signingKey = keys.signingKey ? decodeBase64(keys.signingKey) : undefined;
             var validateKey = keys.validateKey ? decodeBase64(keys.validateKey) : undefined;
+            var dsaPrivate = keys.dsaPrivate ? decodeBase64(keys.dsaPrivate) : undefined;
+            var dsaPublic = keys.dsaPublic ? decodeBase64(keys.dsaPublic) : undefined;
 
             return  {
                 // returns a base-64 encoded ciphertext bundle
                 // or null if decryption failed
-                encrypt: function (plain, recipient) {
-                    // decode the recipient's key
+                encrypt: function (plain, recipient, recipientKem) {
+                    // decode the recipient's keys
                     var u8_their_public = decodeBase64(recipient);
+                    var u8_their_kem_public = recipientKem ? decodeBase64(recipientKem) : undefined;
 
                     // prepare an unmarked envelope for them
-                    // or null if an error is thrown
                     try {
                         var sealed = sealSecretLetter(plain, {
                             signingKey: signingKey,
+                            dsaPrivate: dsaPrivate,
                             ephemeral_keypair: keys.ephemeral_keypair,
 
                             their_public: u8_their_public,
+                            their_kem_public: u8_their_kem_public,
 
                             my_private: u8_my_private,
+                            my_kem_private: u8_my_kem_private,
                             my_public: u8_my_public,
+                            my_kem_public: u8_my_kem_public,
                         });
-                        // return the base64-encoded ciphertext "envelope"
                         return sealed;
                     } catch (e) {
                         console.error(e);
@@ -776,12 +945,12 @@
                 // return an object with content and author
                 // or null if decryption failed
                 decrypt: function (cipher) {
-                    // open a letter from your mailbox
                     try {
-                        // return { content: UTF8, author: serializedCurve }
                         return openSecretLetter(cipher, {
                             validateKey: validateKey,
+                            dsaPublic: dsaPublic,
                             my_private: u8_my_private,
+                            my_kem_private: u8_my_kem_private,
                         });
                     } catch (e) {
                         console.error(e);
@@ -816,7 +985,7 @@
             // sign(curve(curve(msg, author_curve), ephemeral_curve), signing_key)
             var u8_plain = decodeUTF8(plain);
 
-            var u8_inner = asymmetric_encrypt(u8_plain, {
+            var u8_inner = pqc_asymmetric_encrypt(u8_plain, {
                 their_public: keys.team_curve_public,
                 my_private: keys.my_curve_private,
                 my_public: keys.my_curve_public,
@@ -824,7 +993,7 @@
 
             var u8_ephemeral_keypair = Nacl.box.keyPair();
 
-            var u8_outer = asymmetric_encrypt(u8_inner, {
+            var u8_outer = pqc_asymmetric_encrypt(u8_inner, {
                 their_public: keys.team_curve_public,
                 my_private: u8_ephemeral_keypair.secretKey,
                 my_public: u8_ephemeral_keypair.publicKey,
@@ -848,12 +1017,12 @@
             if (u8_outer === null) { throw new Error("E_VALIDATION_FAILURE"); }
 
             // {content: u8, author: u8_curve_public (ephemeral) }
-            var inner = asymmetric_decrypt(u8_outer, {
+            var inner = pqc_asymmetric_decrypt(u8_outer, {
                 my_private: keys.team_curve_private,
             });
 
             // {content: u8, author: u8_curve_public }
-            var u8_plain = asymmetric_decrypt(inner.content, {
+            var u8_plain = pqc_asymmetric_decrypt(inner.content, {
                 my_private: keys.team_curve_private,
             });
 
@@ -1026,16 +1195,17 @@
     };
 
     if (typeof(module) !== 'undefined' && module.exports) {
-        module.exports = factory(require('tweetnacl/nacl-fast'), require('tweetnacl-util'));
+        module.exports = factory(require('tweetnacl/nacl-fast'), require('tweetnacl-util'), require('scrypt-async'));
     } else if ((typeof(define) !== 'undefined' && define !== null) && (define.amd !== null)) {
         define([
             '/components/tweetnacl/nacl-fast.min.js',
             '/components/tweetnacl-util/nacl-util.min.js',
-            '/components/@noble/post-quantum/index.js'
+            '/components/@noble/post-quantum/index.js',
+            '/components/scrypt-async/scrypt-async.min.js',
         ], function () {
-            return factory(window.nacl, window.nacl?.util, window.PostQuantum);
+            return factory(window.nacl, window.nacl?.util, window.PostQuantum, window.scrypt);
         });
     } else {
-        window.chainpad_crypto = factory(window.nacl, window.PostQuantum);
+        window.chainpad_crypto = factory(window.nacl, window.PostQuantum, window.scrypt);
     }
 }());
