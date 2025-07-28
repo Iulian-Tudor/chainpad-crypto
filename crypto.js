@@ -630,16 +630,15 @@
             // If PQC keys are available, add another layer of encryption
             if (keys.their_kem_public && Crypto.PQC && Crypto.PQC.ml_kem && Crypto.PQC.ml_kem.ml_kem512) {
                 try {
-
-                    console.log('[PQC] Using ML-KEM-512 for encryption');
-                    console.log('[PQC] Encrypting with KEM key:', keys.their_kem_public);
-                    console.log('[PQC] typeof:', typeof keys.their_kem_public, 'length:', keys.their_kem_public?.length);
-
                     const kemResult = Crypto.PQC.ml_kem.ml_kem512.encapsulate(
-                        new Uint8Array(keys.their_kem_public) // ensure fresh copy
+                        new Uint8Array(keys.their_kem_public)
                     );
+
+                    if (!kemResult || !kemResult.sharedSecret || !kemResult.cipherText) {
+                        throw new Error('[PQC] Encapsulate failed: result is undefined or incomplete');
+                    }
                     var kemSharedSecret = kemResult.sharedSecret;
-                    var kemCiphertext = kemResult.ciphertext;
+                    var kemCiphertext = kemResult.cipherText;
 
                     if (!kemSharedSecret || kemSharedSecret.length !== 32) {
                         throw new Error('[PQC] Internal encapsulate failed to return sharedSecret');
@@ -660,7 +659,6 @@
                         symNonce,
                         symCipher
                     ]);
-                    console.log('[PQC] Successfully added ML-KEM layer');
                 } catch (e) {
                     console.warn('[PQC] Encryption failed, falling back to traditional:', e);
                     // Prepend with flag indicating no PQC
@@ -671,7 +669,11 @@
                 u8_bundle = u8_concat([new Uint8Array([0]), u8_bundle]);
             }
 
-            return u8_bundle;
+            var result = new Uint8Array(u8_bundle);
+            result.content = result;               // optional for clarity
+            result.author = keys.my_public;
+            result.author_kem = keys.my_kem_public;
+            return result;
         };
 
         // PQC-enhanced asymmetric decryption
@@ -682,7 +684,6 @@
 
             if (pqcFlag === 1 && keys.my_kem_private && Crypto.PQC && Crypto.PQC.ml_kem && Crypto.PQC.ml_kem.ml_kem512) {
                 try {
-                    console.log('[PQC] Detected ML-KEM layer, attempting decryption');
                     // Extract KEM ciphertext (1568 bytes for ML-KEM-512)
                     var kemCiphertext = u8_slice(payload, 0, 768);
                     var symNonce = u8_slice(payload, 768, 768 + Nacl.secretbox.nonceLength);
@@ -692,7 +693,7 @@
                     var kemSharedSecret = Crypto.PQC.ml_kem.ml_kem512.decapsulate(kemCiphertext, keys.my_kem_private);
 
                     // Recreate the traditional shared secret
-                    var traditionalSharedSecret = Nacl.box.before(keys.their_public || keys.sender_public, keys.my_private);
+                    var traditionalSharedSecret = Nacl.box.before(keys.their_public, keys.my_private);
 
                     // Derive the same symmetric key
                     var symmetricKey = deriveSymmetricKey(traditionalSharedSecret, kemSharedSecret);
@@ -702,11 +703,8 @@
                     if (!innerBundle) {
                         throw new Error('Failed to decrypt PQC layer');
                     }
-                    console.log('[PQC] Successfully decrypted ML-KEM layer');
-
                     payload = innerBundle;
                 } catch (e) {
-                    console.error('[PQC] Decryption failed:', e);
                     throw new Error('E_PQC_DECRYPTION_FAILURE');
                 }
             }
@@ -726,16 +724,18 @@
             var u8_plain = Nacl.box.open(
                 u8_cipher,
                 u8_nonce,
-                keys.their_public || u8_sender_public,
+                u8_sender_public,
                 keys.my_private
             );
 
             if (!u8_plain) { throw new Error('E_DECRYPTION_FAILURE'); }
 
-            return {
-                content: u8_plain,
-                author: u8_sender_public,
-            };
+            var result = new Uint8Array(u8_plain);
+            result.content = result;                  // optional, for clarity
+            result.author = u8_sender_public;         // Curve25519 public key
+            result.author_kem = keys.my_kem_public;   // ML-KEM public key (not needed for decryption, but useful for validation)
+            return result;
+
         };
 
         // PQC-enhanced message signing
@@ -1004,26 +1004,17 @@
 
         var Team = Crypto.Team = {};
 
+        function getRawUint8Array(obj) {
+            return (obj instanceof Uint8Array)
+                ? obj
+                : obj.u8_bundle || obj.content || new Uint8Array(obj);
+        }
+
         var encryptForTeam = function (plain, keys) {
             // sign(curve(curve(msg, author_curve), ephemeral_curve), signing_key)
             var u8_plain = decodeUTF8(plain);
 
-            /* // DELIBERATE TEST FAILURE - Force PQC failure by corrupting the KEM public key if it exists
-            if (keys.team_kem_public) {
-                console.log('[PQC-TEST] Deliberately corrupting KEM public key to test error handling');
-                // Make a copy and corrupt the first byte to cause a failure
-                var originalKey = keys.team_kem_public;
-                var corruptKey = new Uint8Array(originalKey.length);
-                corruptKey.set(originalKey);
-                if (corruptKey.length > 0) {
-                    corruptKey[0] = (corruptKey[0] + 1) % 256; // Change first byte
-                }
-                keys.team_kem_public = corruptKey;
-            }*/
-
             // Inner encryption layer with traditional NaCl and optional PQC
-            console.log('[PQC] Encrypting with KEM key:', keys.their_kem_public);
-            console.log('[PQC] typeof:', typeof keys.their_kem_public, 'length:', keys.their_kem_public?.length);
             var u8_inner = pqc_asymmetric_encrypt(u8_plain, {
                 their_public: keys.team_curve_public,
                 their_kem_public: keys.team_kem_public,
@@ -1041,7 +1032,6 @@
             var u8_ephemeral_kem_keypair = null;
             if (Crypto.PQC && Crypto.PQC.ml_kem && Crypto.PQC.ml_kem.ml_kem512) {
                 try {
-                    console.log('[PQC] Generating ephemeral ML-KEM keypair for team encryption');
                     u8_ephemeral_kem_keypair = Crypto.PQC.ml_kem.ml_kem512.keygen();
                 } catch (err) {
                     console.error("[PQC] Failed to generate ephemeral KEM keypair:", err);
@@ -1049,8 +1039,6 @@
             }
 
             // Outer encryption layer with traditional NaCl and optional PQC
-            console.log('[PQC] Encrypting with KEM key:', keys.their_kem_public);
-            console.log('[PQC] typeof:', typeof keys.their_kem_public, 'length:', keys.their_kem_public?.length);
             var u8_outer = pqc_asymmetric_encrypt(u8_inner, {
                 their_public: keys.team_curve_public,
                 their_kem_public: keys.team_kem_public,
@@ -1060,19 +1048,23 @@
                 my_kem_public: u8_ephemeral_kem_keypair?.publicKey,
             });
 
+            // Embed ephemeral KEM public key into author
+            if (u8_ephemeral_kem_keypair?.publicKey && typeof u8_outer === 'object' && u8_outer.author instanceof Uint8Array) {
+                u8_outer = {
+                    content: u8_outer.content,
+                    author: u8_outer.author,
+                    author_kem: u8_ephemeral_kem_keypair.publicKey
+                };
+            }
+
 
             // Sign the final message with classical NaCl signature or hybrid signature if PQC is available
             if (keys.team_dsa_private && Crypto.PQC && Crypto.PQC.ml_dsa && Crypto.PQC.ml_dsa.ml_dsa44) {
                 try {
-                    console.log('[PQC] Creating hybrid signature for team message (NaCl + ML-DSA)');
-                    // Create classical signature
-                    var classical_sig = Nacl.sign(u8_outer, keys.team_ed_private);
-
-                    // Create post-quantum signature
-                    var pq_sig = Crypto.PQC.ml_dsa.ml_dsa44.sign(keys.team_dsa_private, u8_outer);
-
-                    // Combine both signatures into a hybrid signature format
-                    // First the classical signature (contains message), then the PQ signature
+                    // using raw Uint8Array for signing due to bundling
+                    const raw = getRawUint8Array(u8_outer);
+                    const classical_sig = Nacl.sign(raw, keys.team_ed_private);
+                    const pq_sig = Crypto.PQC.ml_dsa.ml_dsa44.sign(keys.team_dsa_private, raw);
                     return encodeBase64(u8_concat([classical_sig, pq_sig]));
                 } catch (err) {
                     console.error("[PQC] Failed to create hybrid team signature, falling back to classical:", err);
@@ -1084,6 +1076,7 @@
             // Classical signature only
             return encodeBase64(Nacl.sign(u8_outer, keys.team_ed_private));
         };
+
 
         // INTERNAL USE ONLY
         // throws on decryption or validation errors
@@ -1129,24 +1122,20 @@
             }
 
             // Inner decryption layer with PQC support
-            // {content: u8, author: u8_curve_public (ephemeral) }
             var inner = pqc_asymmetric_decrypt(u8_outer, {
                 my_private: keys.team_curve_private,
                 my_kem_private: keys.team_kem_private,
-                their_public: undefined, // not needed if sender is embedded
-                sender_public: undefined
+                their_public: keys.team_curve_public,
+                sender_public: keys.team_kem_public,
             });
 
-
             // Innermost decryption layer with PQC support
-            // {content: u8, author: u8_curve_public }
             var u8_plain = pqc_asymmetric_decrypt(inner.content, {
                 my_private: keys.team_curve_private,
                 my_kem_private: keys.team_kem_private,
                 their_public: inner.author,
-                sender_public: inner.author
+                sender_public: inner.author_kem,
             });
-
 
             return {
                 content: encodeUTF8(u8_plain.content),
@@ -1159,41 +1148,71 @@
             teamCurvePublic: 'team_curve_public', // encrypt (to encrypt for)
             teamCurvePrivate: 'team_curve_private', // decrypt (decryption)
 
+            teamKemPrivate: 'team_kem_private', // decrypt (optional PQC decryption)
+            teamKemPublic: 'team_kem_public', // encrypt (optional PQC)
+
             myCurvePublic: 'my_curve_public', // encrypt (authorship inclusion)
             myCurvePrivate: 'my_curve_private', // encrypt (encryption)
 
+            myKemPublic: 'my_kem_public', // encrypt (optional PQC)
+            myKemPrivate: 'my_kem_private', // encrypt (optional PQC)
+
             teamEdPublic: 'team_ed_public', // decrypt (validation)
             teamEdPrivate: 'team_ed_private', // encrypt (signing)
+
+            teamDsaPublic: 'team_dsa_public', // decrypt (validation)
+            teamDsaPrivate: 'team_dsa_private', // encrypt (signing)
         };
 
         var team_can_decrypt = function (K /* u8_keys */) {
             return Boolean(
-                // team_curve_private (to read messages encrypted for the team)
+                // Traditional Curve key
                 K.team_curve_private && K.team_curve_private.length === Nacl.box.secretKeyLength &&
-                // team_sign_public (to validate that messages are signed by team members)
+
+                // PQC: Optional but recommended for hybrid mode
+                (!Crypto.PQC || !Crypto.PQC.ml_kem || !Crypto.PQC.ml_kem.ml_kem512 ||
+                    (K.team_kem_private && K.team_kem_private.length === 1632)) &&
+
+                // Public team signing key
                 K.team_ed_public && K.team_ed_public.length === Nacl.sign.publicKeyLength
             );
         };
 
+
         var team_can_encrypt = function (K /* u8_keys */) {
             return Boolean(
-                // my_curve_private (for the inner authenticated encryption)
+                // Traditional keys
                 K.my_curve_private && K.my_curve_private.length === Nacl.box.secretKeyLength &&
-                // my_curve_public (for inclusion in the inner message)
-                K.my_curve_public && K.my_curve_public.length === Nacl.box.publicKeyLength &&
-                // team_curve_public (to encrypt for the team)
+                K.my_curve_public  && K.my_curve_public.length === Nacl.box.publicKeyLength &&
                 K.team_curve_public && K.team_curve_public.length === Nacl.box.publicKeyLength &&
-                // team_ed_private (to sign the final message)
-                K.team_ed_private && K.team_ed_private.length === Nacl.sign.secretKeyLength
+
+                // PQC: Optional but recommended for hybrid mode
+                (!Crypto.PQC || !Crypto.PQC.ml_kem || !Crypto.PQC.ml_kem.ml_kem512 ||
+                    (K.my_kem_private && K.my_kem_private.length === 1632 &&
+                        K.my_kem_public  && K.my_kem_public.length === 800 &&
+                        K.team_kem_public && K.team_kem_public.length === 800)) &&
+
+                // Required to sign the outer message
+                K.team_ed_private && K.team_ed_private.length === Nacl.sign.secretKeyLength &&
+
+                // Optional PQC signer (hybrid signature)
+                (!Crypto.PQC || !Crypto.PQC.ml_dsa || !Crypto.PQC.ml_dsa.ml_dsa44 ||
+                    (K.team_dsa_private && K.team_dsa_private.length === 2560))
             );
         };
+
 
         var team_validate_own_keys = function (K) {
             return Boolean(
                 K.curvePublic && decodeBase64(K.curvePublic).length === Nacl.box.publicKeyLength &&
-                K.curvePrivate && decodeBase64(K.curvePrivate).length === Nacl.box.secretKeyLength
+                K.curvePrivate && decodeBase64(K.curvePrivate).length === Nacl.box.secretKeyLength &&
+
+                // PQC support for UI validation / self-check (optional)
+                (!K.kemPublic || decodeBase64(K.kemPublic).length === 800) &&
+                (!K.kemPrivate || decodeBase64(K.kemPrivate).length === 1632)
             );
         };
+
 
         var u8_stretch = function (u8) {
             var hashed = Nacl.hash(u8);
@@ -1293,13 +1312,14 @@
                 // member keys (teamEdPrivate, teamEdPublic)
                 teamEdPrivate: encodeBase64(teamEd.secretKey),
                 teamEdPublic: encodeBase64(teamEd.publicKey),
+                // optional PQC keys
+                myKemPublic: myKeys.kemPublic,
+                myKemPrivate: myKeys.kemPrivate,
+                // team PQC keys
+                teamDsaPrivate: encodeBase64(teamDsaPair?.secretKey),
+                teamDsaPublic: encodeBase64(teamDsaPair?.publicKey),
             }, guestKeys); // guest keys & info (channel, teamCurvePrivate, teamCurvePublic)
 
-            // Add PQC DSA keys if available
-            if (teamDsaPair) {
-                result.teamDsaPrivate = encodeBase64(teamDsaPair.secretKey);
-                result.teamDsaPublic = encodeBase64(teamDsaPair.publicKey);
-            }
 
             return result;
         };
@@ -1312,7 +1332,7 @@
         // decrypt can optionally skip validation if you trust the source of the message
         Team.createEncryptor = function (keys) {
             var u8_keys = {};
-            // Process traditional keys
+            // Process keys
             Object.keys(team_key_map).forEach(function (k) {
                 if (!keys[k]) { return; }
                 try {
@@ -1322,36 +1342,6 @@
                     throw new Error('INVALID_KEY_SUPPLIED');
                 }
             });
-
-            // Add PQC keys if available
-            if (keys.teamKemPrivate) {
-                try {
-                    u8_keys.team_kem_private = decodeBase64(keys.teamKemPrivate);
-                } catch (err) {
-                    console.warn('Invalid teamKemPrivate key supplied', err);
-                }
-            }
-            if (keys.teamKemPublic) {
-                try {
-                    u8_keys.team_kem_public = decodeBase64(keys.teamKemPublic);
-                } catch (err) {
-                    console.warn('Invalid teamKemPublic key supplied', err);
-                }
-            }
-            if (keys.teamDsaPrivate) {
-                try {
-                    u8_keys.team_dsa_private = decodeBase64(keys.teamDsaPrivate);
-                } catch (err) {
-                    console.warn('Invalid teamDsaPrivate key supplied', err);
-                }
-            }
-            if (keys.teamDsaPublic) {
-                try {
-                    u8_keys.team_dsa_public = decodeBase64(keys.teamDsaPublic);
-                } catch (err) {
-                    console.warn('Invalid teamDsaPublic key supplied', err);
-                }
-            }
 
             var out = {};
 
