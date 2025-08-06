@@ -529,56 +529,167 @@
             return encodeUTF8(message);
         };
 
-        Curve.signAndEncrypt = function (msg, cryptKey, signKey) {
+        Curve.signAndEncrypt = function (msg, cryptKey, signKey, dsaPrivate) {
             var packed = Curve.encrypt(msg, cryptKey);
-            return encodeBase64(Nacl.sign(decodeUTF8(packed), signKey));
+            var signedMessage = decodeUTF8(packed);
+
+            // Generate hybrid signature if PQC is available
+            if (dsaPrivate && Crypto.PQC && Crypto.PQC.ml_dsa && Crypto.PQC.ml_dsa.ml_dsa44) {
+                try {
+                    // Generate classical signature (always required)
+                    var classicalSig = Nacl.sign(signedMessage, signKey);
+
+                    // Generate post-quantum signature
+                    var mlDsaSig = Crypto.PQC.ml_dsa.ml_dsa44.sign(dsaPrivate, signedMessage);
+
+                    // Combine signatures: [classicalSig][mlDsaSig]
+                    var hybridSig = u8_concat([classicalSig, mlDsaSig]);
+                    return encodeBase64(hybridSig);
+                } catch (e) {
+                    console.warn('ML-DSA signing failed, using only NaCl:', e);
+                }
+            }
+
+            // Classical signature only
+            return encodeBase64(Nacl.sign(signedMessage, signKey));
         };
 
-        Curve.openSigned = function (msg, cryptKey /*, validateKey STUBBED*/) {
-            var content = decodeBase64(msg).subarray(64);
+        Curve.openSigned = function (msg, cryptKey, validateKey, dsaPublic) {
+            var signedMessage = decodeBase64(msg);
+
+            // Check if we have both signatures
+            var naclSigLength = 64;
+            var mlDsaSigLength = 2420; // ML-DSA-44 signature length
+
+            if (signedMessage.length >= naclSigLength + mlDsaSigLength &&
+                dsaPublic &&
+                Crypto.PQC && Crypto.PQC.ml_dsa && Crypto.PQC.ml_dsa.ml_dsa44) {
+
+                try {
+                    // Extract both signatures
+                    var naclPortion = u8_slice(signedMessage, 0, naclSigLength + signedMessage.length - naclSigLength - mlDsaSigLength);
+                    var mlDsaSig = u8_slice(signedMessage, signedMessage.length - mlDsaSigLength);
+                    var originalMessage = u8_slice(signedMessage, naclSigLength, signedMessage.length - mlDsaSigLength);
+
+                    // Verify NaCl signature
+                    var naclResult = Nacl.sign.open(naclPortion, validateKey);
+                    if (!naclResult) {
+                        return null;
+                    }
+
+                    // Verify ML-DSA signature
+                    var mlDsaValid = Crypto.PQC.ml_dsa.ml_dsa44.verify(dsaPublic, originalMessage, mlDsaSig);
+                    if (!mlDsaValid) {
+                        return null;
+                    }
+
+                    return Curve.decrypt(encodeUTF8(originalMessage), cryptKey);
+                } catch (e) {
+                    console.error('PQC signature verification failed:', e);
+                    return null;
+                }
+            }
+
+            // Fall back to traditional NaCl verification
+            var content = signedMessage.subarray(64);
             return Curve.decrypt(encodeUTF8(content), cryptKey);
         };
 
-        Curve.deriveKeys = function (theirs, mine) {
+        Curve.deriveKeys = function (theirs, mine, theirsKem, mineKem) {
             try {
-                var pub = decodeBase64(theirs);
-                var secret = decodeBase64(mine);
+                const theirCurvePub = decodeBase64(theirs);
+                const myCurvePriv = decodeBase64(mine);
+                const naclSharedSecret = Nacl.box.before(theirCurvePub, myCurvePriv);
 
-                var sharedSecret = Nacl.box.before(pub, secret);
-                var salt = decodeUTF8('CryptPad.signingKeyGenerationSalt');
+                let concatSecret = naclSharedSecret;
+                let theirKemPub, myKemPub;
+                try {
+                    theirKemPub = decodeBase64(theirsKem);
+                    myKemPub = decodeBase64(mineKem);
 
-                // 64 uint8s
-                var hash = Nacl.hash(u8_concat([salt, sharedSecret]));
-                var signKp = Nacl.sign.keyPair.fromSeed(hash.subarray(0, 32));
-                var cryptKey = hash.subarray(32, 64);
+                    const kemResult = Crypto.PQC.ml_kem.ml_kem512.encapsulate(theirKemPub);
+                    const kemSharedSecret = kemResult.sharedSecret;
+                    concatSecret = u8_concat([naclSharedSecret, kemSharedSecret]);
+                } catch (e) {
+                    console.warn("Fallback: KEM keys missing or invalid, using NaCl shared secret only");
+                }
 
-                return {
+                const salt = decodeUTF8('CryptPad.signingKeyGenerationSalt');
+                const hash = Nacl.hash(u8_concat([
+                    salt,
+                    concatSecret,
+                    theirKemPub || new Uint8Array(0),
+                    myKemPub || new Uint8Array(0)
+                ]));
+
+                const signKp = Nacl.sign.keyPair.fromSeed(hash.subarray(0, 32));
+                const cryptKey = hash.subarray(32, 64);
+
+                const result = {
                     cryptKey: encodeBase64(cryptKey),
                     signKey: encodeBase64(signKp.secretKey),
                     validateKey: encodeBase64(signKp.publicKey)
                 };
+
+                if (Crypto.PQC?.ml_dsa?.ml_dsa44) {
+                    try {
+                        const pqcSalt = decodeUTF8('CryptPad.curve.pqcSalt');
+                        const pqcSeed = Nacl.hash(u8_concat([
+                            concatSecret,
+                            pqcSalt,
+                            myKemPub || new Uint8Array(0)
+                        ])).subarray(0, 32);
+                        const dsaPair = Crypto.PQC.ml_dsa.ml_dsa44.internal.keygen(pqcSeed);
+                        result.dsaPrivate = encodeBase64(dsaPair.secretKey);
+                        result.dsaPublic = encodeBase64(dsaPair.publicKey);
+                    } catch (err) {
+                        console.error("Failed to generate PQC DSA keypair:", err);
+                    }
+                }
+
+                return result;
             } catch (e) {
-                console.error('invalid keys or other problem deriving keys');
-                console.error(e);
+                console.error("deriveKeys failed:", e);
                 return null;
             }
         };
 
+
+
         Curve.createEncryptor = function (keys) {
             if (!keys || typeof(keys) !== 'object') {
-                return void console.error("invalid input for createEncryptor");
+                console.error("invalid input for createEncryptor");
+                return {
+                    encrypt: function () { throw new Error("Invalid encryptor: keys missing or malformed"); },
+                    decrypt: function () { throw new Error("Invalid encryptor: keys missing or malformed"); }
+                };
             }
 
-            var cryptKey = decodeBase64(keys.cryptKey);
-            var signKey = decodeBase64(keys.signKey);
-            var validateKey = decodeBase64(keys.validateKey);
+            var cryptKey, signKey, validateKey;
+            var dsaPrivate, dsaPublic;
+
+            try {
+                cryptKey = decodeBase64(keys.cryptKey);
+                signKey = decodeBase64(keys.signKey);
+                validateKey = decodeBase64(keys.validateKey);
+
+                // PQC keys (optional)
+                dsaPrivate = keys.dsaPrivate ? decodeBase64(keys.dsaPrivate) : undefined;
+                dsaPublic = keys.dsaPublic ? decodeBase64(keys.dsaPublic) : undefined;
+            } catch (e) {
+                console.error("Failed to decode keys for createEncryptor:", e);
+                return {
+                    encrypt: function () { throw new Error("Invalid encryptor: failed to decode keys"); },
+                    decrypt: function () { throw new Error("Invalid encryptor: failed to decode keys"); }
+                };
+            }
 
             return {
                 encrypt: function (msg) {
-                    return Curve.signAndEncrypt(msg, cryptKey, signKey);
+                    return Curve.signAndEncrypt(msg, cryptKey, signKey, dsaPrivate);
                 },
                 decrypt: function (packed) {
-                    return Curve.openSigned(packed, cryptKey, validateKey);
+                    return Curve.openSigned(packed, cryptKey, validateKey, dsaPublic);
                 }
             };
         };
