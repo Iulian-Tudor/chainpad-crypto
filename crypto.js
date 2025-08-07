@@ -59,6 +59,171 @@
             return derived;
         };
 
+        // Utility function to concatenate Uint8Arrays
+        var u8_concat = function (A) {
+            // expect a list of uint8Arrays
+            var length = 0;
+            A.forEach(function (a) { length += a.length; });
+            var total = new Uint8Array(length);
+
+            var offset = 0;
+            A.forEach(function (a) {
+                total.set(a, offset);
+                offset += a.length;
+            });
+            return total;
+        };
+
+        // Utility function to slice a Uint8Array
+        var u8_slice = function (A, start, end) {
+            return new Uint8Array(Array.prototype.slice.call(A, start, end));
+        };
+
+        // Reusable function to generate KEM keys with common error handling
+        var generateKemKeypair = function(seed, errorContext) {
+            if (!Crypto.PQC || !Crypto.PQC.ml_kem || !Crypto.PQC.ml_kem.ml_kem512) {
+                return null;
+            }
+
+            try {
+                // Ensure seed is exactly 64 bytes
+                var kemSeed;
+                if (!seed) {
+                    kemSeed = Nacl.randomBytes(64);
+                } else if (seed.length === 64) {
+                    kemSeed = seed;
+                } else {
+                    // Hash the seed to get a deterministic 64-byte value
+                    kemSeed = Nacl.hash(seed).subarray(0, 64);
+                }
+
+                var kemPair = Crypto.PQC.ml_kem.ml_kem512.keygen(kemSeed);
+                return {
+                    publicKey: kemPair.publicKey,
+                    secretKey: kemPair.secretKey
+                };
+            } catch (err) {
+                console.error('[chainpad-crypto.' + errorContext + '] failed to generate PQC KEM keys', err);
+                return null;
+            }
+        };
+
+        // Reusable function to generate DSA keys with common error handling
+        var generateDsaKeypair = function(seed, errorContext) {
+            if (!Crypto.PQC || !Crypto.PQC.ml_dsa || !Crypto.PQC.ml_dsa.ml_dsa44) {
+                return null;
+            }
+
+            try {
+                // Ensure seed is exactly 32 bytes
+                var dsaSeed;
+                if (!seed) {
+                    dsaSeed = Nacl.randomBytes(32);
+                } else if (seed.length === 32) {
+                    dsaSeed = seed;
+                } else {
+                    // Hash the seed to get a deterministic 32-byte value
+                    dsaSeed = Nacl.hash(seed).subarray(0, 32);
+                }
+
+                var dsaPair = Crypto.PQC.ml_dsa.ml_dsa44.internal.keygen(dsaSeed);
+                return {
+                    publicKey: dsaPair.publicKey,
+                    secretKey: dsaPair.secretKey
+                };
+            } catch (err) {
+                console.error('[chainpad-crypto.' + errorContext + '] failed to generate PQC DSA keys', err);
+                return null;
+            }
+        };
+
+        // Helper to add KEM keys to a result object
+        var addKemKeysToResult = function(result, kemPair, publicKeyName, privateKeyName) {
+            if (kemPair) {
+                result[publicKeyName || 'kemPublic'] = encodeBase64(kemPair.publicKey);
+                result[privateKeyName || 'kemPrivate'] = encodeBase64(kemPair.secretKey);
+            }
+            return result;
+        };
+
+        // Helper to add DSA keys to a result object
+        var addDsaKeysToResult = function(result, dsaPair, publicKeyName, privateKeyName) {
+            if (dsaPair) {
+                result[publicKeyName || 'dsaPublic'] = encodeBase64(dsaPair.publicKey);
+                result[privateKeyName || 'dsaPrivate'] = encodeBase64(dsaPair.secretKey);
+            }
+            return result;
+        };
+
+        // KEM operations
+        var kemEncapsulate = function(publicKey, errorContext) {
+            if (!Crypto.PQC || !Crypto.PQC.ml_kem || !Crypto.PQC.ml_kem.ml_kem512) {
+                return null;
+            }
+
+            try {
+                var kemPublicKey = publicKey;
+                var result = Crypto.PQC.ml_kem.ml_kem512.encapsulate(kemPublicKey);
+                return {
+                    sharedSecret: result.sharedSecret,
+                    cipherText: result.cipherText
+                };
+            } catch (err) {
+                console.error('[chainpad-crypto.' + (errorContext || 'kemEncapsulate') + '] failed to encapsulate with KEM', err);
+                return null;
+            }
+        };
+
+        var kemDecapsulate = function(cipherText, privateKey, errorContext) {
+            if (!Crypto.PQC || !Crypto.PQC.ml_kem || !Crypto.PQC.ml_kem.ml_kem512) {
+                return null;
+            }
+
+            try {
+                var kemCipherText = cipherText;
+                var kemPrivateKey = privateKey;
+                var sharedSecret = Crypto.PQC.ml_kem.ml_kem512.decapsulate(kemCipherText, kemPrivateKey);
+                return sharedSecret;
+            } catch (err) {
+                console.error('[chainpad-crypto.' + (errorContext || 'kemDecapsulate') + '] failed to decapsulate KEM', err);
+                return null;
+            }
+        };
+
+        // DSA operations
+        var dsaSign = function(privateKey, message, errorContext) {
+            if (!Crypto.PQC || !Crypto.PQC.ml_dsa || !Crypto.PQC.ml_dsa.ml_dsa44) {
+                return null;
+            }
+
+            try {
+                var dsaMessage = message;
+                var dsaPrivateKey = privateKey;
+
+                return Crypto.PQC.ml_dsa.ml_dsa44.sign(dsaPrivateKey, dsaMessage);
+            } catch (err) {
+                console.error('[chainpad-crypto.' + (errorContext || 'dsaSign') + '] failed to sign with DSA', err);
+                return null;
+            }
+        };
+
+        var dsaVerify = function(publicKey, message, signature, errorContext) {
+            if (!Crypto.PQC || !Crypto.PQC.ml_dsa || !Crypto.PQC.ml_dsa.ml_dsa44) {
+                return false;
+            }
+
+            try {
+                var dsaPublicKey = publicKey;
+                var dsaMessage = message;
+                var dsaSignature = signature;
+
+                return Crypto.PQC.ml_dsa.ml_dsa44.verify(dsaPublicKey, dsaMessage, dsaSignature);
+            } catch (err) {
+                console.error('[chainpad-crypto.' + (errorContext || 'dsaVerify') + '] failed to verify DSA signature', err);
+                return false;
+            }
+        };
+
         // CryptoAgility abstraction of NaCl and other cryptographic operations
         var CryptoAgility = Crypto.CryptoAgility = {};
 
@@ -67,6 +232,17 @@
 
         CryptoAgility.decodeUTF8 = decodeUTF8;
         CryptoAgility.encodeUTF8 = encodeUTF8;
+
+        CryptoAgility.generateKemKeypair = generateKemKeypair;
+        CryptoAgility.generateDsaKeypair = generateDsaKeypair;
+        CryptoAgility.addKemKeysToResult = addKemKeysToResult;
+        CryptoAgility.addDsaKeysToResult = addDsaKeysToResult;
+
+        CryptoAgility.kemDecapsulate = kemDecapsulate;
+        CryptoAgility.kemEncapsulate = kemEncapsulate;
+        CryptoAgility.dsaSign = dsaSign;
+        CryptoAgility.dsaVerify = dsaVerify;
+
 
         CryptoAgility.signKeyPairFromSeed = function(seed) {
             return Nacl.sign.keyPair.fromSeed(seed);
@@ -352,27 +528,45 @@
                 var hash = Nacl.hash(decodeBase64(keyStr));
                 var signKp = Nacl.sign.keyPair.fromSeed(hash.subarray(0, 32));
                 var cryptKey = hash.subarray(32, 64);
-                return {
+                var result = {
                     editKeyStr: keyStr,
                     signKey: encodeBase64(signKp.secretKey),
                     validateKey: encodeBase64(signKp.publicKey),
                     cryptKey: cryptKey,
                     viewKeyStr: b64Encode(cryptKey)
                 };
+
+                // Add PQC keys if available
+                var kemPair = generateKemKeypair(hash, 'createEditCryptor');
+                result = addKemKeysToResult(result, kemPair);
+
+                var dsaPair = generateDsaKeypair(signKp.secretKey, 'createEditCryptor');
+                result = addDsaKeysToResult(result, dsaPair);
+
+                return result;
             } catch (err) {
                 console.error('[chainpad-crypto.createEditCryptor] invalid string supplied');
                 throw err;
             }
         };
+
         Crypto.createViewCryptor = function (cryptKeyStr) {
             try {
                 if (!cryptKeyStr) {
                     throw new Error("Cannot open a new pad in read-only mode!");
                 }
-                return {
-                    cryptKey: decodeBase64(cryptKeyStr),
+
+                var cryptKey = decodeBase64(cryptKeyStr);
+                var result = {
+                    cryptKey: cryptKey,
                     viewKeyStr: cryptKeyStr
                 };
+
+                // Add PQC keys if available
+                var kemPair = generateKemKeypair(cryptKey, 'createViewCryptor');
+                result = addKemKeysToResult(result, kemPair);
+
+                return result;
             } catch (err) {
                 console.error('[chainpad-crypto.createViewCryptor] invalid string supplied');
                 throw err;
@@ -404,18 +598,29 @@
                 // we can always build a version 1 hash that doesn't contain this informaton.
                 var signKp2 = Nacl.sign.keyPair.fromSeed(hash.subarray(32, 64));
 
-                return {
+                var result = {
                     viewKeyStr: viewKeyStr,
                     cryptKey: cryptKey,
                     chanId: b64Encode(chanId),
                     secondarySignKey: encodeBase64(signKp2.secretKey),
                     secondaryValidateKey: encodeBase64(signKp2.publicKey),
                 };
+
+                // Generate PQC keys if available
+                var kemPair = generateKemKeypair(u8_concat([hash, superSeed]), 'createViewCryptor2');
+                result = addKemKeysToResult(result, kemPair);
+
+                // Generate PQC signature keys if available
+                var dsaPair = generateDsaKeypair(u8_concat([hash.subarray(32, 64), superSeed]), 'createViewCryptor2');
+                result = addDsaKeysToResult(result, dsaPair);
+
+                return result;
             } catch (err) {
                 console.error('[chainpad-crypto.createViewCryptor2] invalid string supplied');
                 throw err;
             }
         };
+
         Crypto.createEditCryptor2 = function (keyStr, seed, password) {
             try {
                 if (!keyStr) {
@@ -447,7 +652,8 @@
                 var seed2 = hash.subarray(32, 64);
                 var viewKeyStr = b64Encode(seed2);
                 var viewCryptor = createViewCryptor2(viewKeyStr, password);
-                return {
+
+                var result = {
                     editKeyStr: keyStr,
                     viewKeyStr: viewKeyStr,
                     signKey: encodeBase64(signKp.secretKey),
@@ -458,6 +664,23 @@
                     secondarySignKey: viewCryptor.secondarySignKey,
                     secondaryValidateKey: viewCryptor.secondaryValidateKey
                 };
+
+                // Include PQC keys from viewCryptor
+                if (viewCryptor.kemPublic) {
+                    result.kemPublic = viewCryptor.kemPublic;
+                    result.kemPrivate = viewCryptor.kemPrivate;
+                }
+
+                if (viewCryptor.secondaryDsaKey) {
+                    result.secondaryDsaKey = viewCryptor.secondaryDsaKey;
+                    result.secondaryDsaValidateKey = viewCryptor.secondaryDsaValidateKey;
+                }
+
+                // Generate primary PQC DSA keys if available
+                var dsaPair = generateDsaKeypair(hash.subarray(0, 32), 'createEditCryptor2');
+                result = addDsaKeysToResult(result, dsaPair);
+
+                return result;
             } catch (err) {
                 console.error('[chainpad-crypto.createEditCryptor2] invalid string supplied');
                 throw err;
@@ -484,11 +707,22 @@
                 var hash = Nacl.hash(superSeed);
                 var chanId = hash.subarray(0,24);
                 var cryptKey = hash.subarray(24, 56);
-                return {
+
+                var result = {
                     fileKeyStr: keyStr,
                     cryptKey: cryptKey,
                     chanId: b64Encode(chanId)
                 };
+
+                // Add PQC keys if available
+                var kemPair = generateKemKeypair(u8_concat([hash, superSeed]), 'createFileCryptor2');
+                result = addKemKeysToResult(result, kemPair);
+
+                // Add PQC signature keys if needed
+                var dsaPair = generateDsaKeypair(u8_concat([hash.subarray(56, 64), superSeed]), 'createFileCryptor2');
+                result = addDsaKeysToResult(result, dsaPair);
+
+                return result;
             } catch (err) {
                 console.error('[chainpad-crypto.createFileCryptor2] invalid string supplied');
                 throw err;
@@ -498,20 +732,6 @@
         /*  Symmetric encryption used in CryptPad's one-to-one chat system
         */
         var Curve = Crypto.Curve = {};
-
-        var u8_concat = function (A) {
-            // expect a list of uint8Arrays
-            var length = 0;
-            A.forEach(function (a) { length += a.length; });
-            var total = new Uint8Array(length);
-
-            var offset = 0;
-            A.forEach(function (a) {
-                total.set(a, offset);
-                offset += a.length;
-            });
-            return total;
-        };
 
         Curve.encrypt = function (message, secret) {
             var buffer = decodeUTF8(message);
@@ -529,56 +749,159 @@
             return encodeUTF8(message);
         };
 
-        Curve.signAndEncrypt = function (msg, cryptKey, signKey) {
+        Curve.signAndEncrypt = function (msg, cryptKey, signKey, dsaPrivate) {
             var packed = Curve.encrypt(msg, cryptKey);
-            return encodeBase64(Nacl.sign(decodeUTF8(packed), signKey));
+            var signedMessage = decodeUTF8(packed);
+
+            // Generate hybrid signature if PQC is available
+            if (dsaPrivate && Crypto.PQC && Crypto.PQC.ml_dsa && Crypto.PQC.ml_dsa.ml_dsa44) {
+                try {
+                    // Generate classical signature (always required)
+                    var classicalSig = Nacl.sign(signedMessage, signKey);
+
+                    // Generate post-quantum signature
+                    var mlDsaSig = dsaSign(dsaPrivate, signedMessage);
+
+                    // Combine signatures: [classicalSig][mlDsaSig]
+                    var hybridSig = u8_concat([classicalSig, mlDsaSig]);
+                    return encodeBase64(hybridSig);
+                } catch (e) {
+                    console.warn('ML-DSA signing failed, using only NaCl:', e);
+                }
+            }
+
+            // Classical signature only
+            return encodeBase64(Nacl.sign(signedMessage, signKey));
         };
 
-        Curve.openSigned = function (msg, cryptKey /*, validateKey STUBBED*/) {
-            var content = decodeBase64(msg).subarray(64);
+        Curve.openSigned = function (msg, cryptKey, validateKey, dsaPublic) {
+            var signedMessage = decodeBase64(msg);
+
+            // Check if we have both signatures
+            var naclSigLength = 64;
+            var mlDsaSigLength = 2420; // ML-DSA-44 signature length
+
+            if (signedMessage.length >= naclSigLength + mlDsaSigLength &&
+                dsaPublic &&
+                Crypto.PQC && Crypto.PQC.ml_dsa && Crypto.PQC.ml_dsa.ml_dsa44) {
+
+                try {
+                    // Extract both signatures
+                    var naclPortion = u8_slice(signedMessage, 0, naclSigLength + signedMessage.length - naclSigLength - mlDsaSigLength);
+                    var mlDsaSig = u8_slice(signedMessage, signedMessage.length - mlDsaSigLength);
+                    var originalMessage = u8_slice(signedMessage, naclSigLength, signedMessage.length - mlDsaSigLength);
+
+                    // Verify NaCl signature
+                    var naclResult = Nacl.sign.open(naclPortion, validateKey);
+                    if (!naclResult) {
+                        return null;
+                    }
+
+                    // Verify ML-DSA signature
+                    var mlDsaValid = dsaVerify(dsaPublic, originalMessage, mlDsaSig);
+                    if (!mlDsaValid) {
+                        return null;
+                    }
+
+                    return Curve.decrypt(encodeUTF8(originalMessage), cryptKey);
+                } catch (e) {
+                    console.error('PQC signature verification failed:', e);
+                    return null;
+                }
+            }
+
+            // Fall back to traditional NaCl verification
+            var content = signedMessage.subarray(64);
             return Curve.decrypt(encodeUTF8(content), cryptKey);
         };
 
-        Curve.deriveKeys = function (theirs, mine) {
+
+        Curve.deriveKeys = function (theirs, mine, theirsKem, mineKem) {
             try {
-                var pub = decodeBase64(theirs);
-                var secret = decodeBase64(mine);
+                const pub = decodeBase64(theirs);
+                const secret = decodeBase64(mine);
+                const theirKemPub = decodeBase64(theirsKem);
 
-                var sharedSecret = Nacl.box.before(pub, secret);
-                var salt = decodeUTF8('CryptPad.signingKeyGenerationSalt');
+                const sharedSecret = Nacl.box.before(pub, secret);
 
-                // 64 uint8s
-                var hash = Nacl.hash(u8_concat([salt, sharedSecret]));
-                var signKp = Nacl.sign.keyPair.fromSeed(hash.subarray(0, 32));
-                var cryptKey = hash.subarray(32, 64);
+                if (theirKemPub.length !== 800) {
+                    throw new Error("Invalid KEM public key length: expected 800 bytes");
+                }
 
-                return {
+                const kemResult = kemEncapsulate(theirKemPub);
+                const kemSharedSecret = kemResult.sharedSecret;
+
+
+                const symmetricKey = deriveSymmetricKey(sharedSecret, kemSharedSecret);
+
+
+                const salt = decodeUTF8('CryptPad.signingKeyGenerationSalt');
+                const hash = Nacl.hash(u8_concat([salt, symmetricKey])); // 64B
+
+                const signKp = Nacl.sign.keyPair.fromSeed(hash.subarray(0, 32));
+                const cryptKey = hash.subarray(32, 64); // 32B
+
+                const result = {
                     cryptKey: encodeBase64(cryptKey),
                     signKey: encodeBase64(signKp.secretKey),
-                    validateKey: encodeBase64(signKp.publicKey)
+                    validateKey: encodeBase64(signKp.publicKey),
                 };
+
+                if (Crypto.PQC?.ml_dsa?.ml_dsa44) {
+                    try {
+                        const pqcSalt = decodeUTF8('CryptPad.curve.pqcSalt');
+                        const pqcSeed = Nacl.hash(u8_concat([symmetricKey, pqcSalt])).subarray(0, 32);
+                        const dsaPair = generateDsaKeypair(pqcSeed);
+
+                        result.dsaPrivate = encodeBase64(dsaPair.secretKey);
+                        result.dsaPublic = encodeBase64(dsaPair.publicKey);
+                    } catch (err) {
+                        console.error("Failed to generate PQC signature keys:", err);
+                    }
+                }
+
+                return result;
+
             } catch (e) {
-                console.error('invalid keys or other problem deriving keys');
-                console.error(e);
+                console.error("Failed to derive keys:", e);
                 return null;
             }
         };
 
         Curve.createEncryptor = function (keys) {
             if (!keys || typeof(keys) !== 'object') {
-                return void console.error("invalid input for createEncryptor");
+                console.error("invalid input for createEncryptor");
+                return {
+                    encrypt: function () { throw new Error("Invalid encryptor: keys missing or malformed"); },
+                    decrypt: function () { throw new Error("Invalid encryptor: keys missing or malformed"); }
+                };
             }
 
-            var cryptKey = decodeBase64(keys.cryptKey);
-            var signKey = decodeBase64(keys.signKey);
-            var validateKey = decodeBase64(keys.validateKey);
+            var cryptKey, signKey, validateKey;
+            var dsaPrivate, dsaPublic;
+
+            try {
+                cryptKey = decodeBase64(keys.cryptKey);
+                signKey = decodeBase64(keys.signKey);
+                validateKey = decodeBase64(keys.validateKey);
+
+                // PQC keys (optional)
+                dsaPrivate = keys.dsaPrivate ? decodeBase64(keys.dsaPrivate) : undefined;
+                dsaPublic = keys.dsaPublic ? decodeBase64(keys.dsaPublic) : undefined;
+            } catch (e) {
+                console.error("Failed to decode keys for createEncryptor:", e);
+                return {
+                    encrypt: function () { throw new Error("Invalid encryptor: failed to decode keys"); },
+                    decrypt: function () { throw new Error("Invalid encryptor: failed to decode keys"); }
+                };
+            }
 
             return {
                 encrypt: function (msg) {
-                    return Curve.signAndEncrypt(msg, cryptKey, signKey);
+                    return Curve.signAndEncrypt(msg, cryptKey, signKey, dsaPrivate);
                 },
                 decrypt: function (packed) {
-                    return Curve.openSigned(packed, cryptKey, validateKey);
+                    return Curve.openSigned(packed, cryptKey, validateKey, dsaPublic);
                 }
             };
         };
@@ -604,9 +927,6 @@
 
         */
 
-        var u8_slice = function (A, start, end) {
-            return new Uint8Array(Array.prototype.slice.call(A, start, end));
-        };
 
         var Mailbox = Crypto.Mailbox = {};
 
@@ -630,9 +950,7 @@
             // If PQC keys are available, add another layer of encryption
             if (keys.their_kem_public && Crypto.PQC && Crypto.PQC.ml_kem && Crypto.PQC.ml_kem.ml_kem512) {
                 try {
-                    const kemResult = Crypto.PQC.ml_kem.ml_kem512.encapsulate(
-                        new Uint8Array(keys.their_kem_public)
-                    );
+                    const kemResult = kemEncapsulate(keys.their_kem_public, 'pqc_asymmetric_encrypt');
 
                     if (!kemResult || !kemResult.sharedSecret || !kemResult.cipherText) {
                         throw new Error('[PQC] Encapsulate failed: result is undefined or incomplete');
@@ -684,13 +1002,12 @@
 
             if (pqcFlag === 1 && keys.my_kem_private && Crypto.PQC && Crypto.PQC.ml_kem && Crypto.PQC.ml_kem.ml_kem512) {
                 try {
-                    // Extract KEM ciphertext (1568 bytes for ML-KEM-512)
+                    // Extract KEM ciphertext (768 bytes for ML-KEM-512)
                     var kemCiphertext = u8_slice(payload, 0, 768);
                     var symNonce = u8_slice(payload, 768, 768 + Nacl.secretbox.nonceLength);
                     var symCipher = u8_slice(payload, 768 + Nacl.secretbox.nonceLength);
 
-                    // Decrypt KEM to get shared secret
-                    var kemSharedSecret = Crypto.PQC.ml_kem.ml_kem512.decapsulate(kemCiphertext, keys.my_kem_private);
+                    var kemSharedSecret = kemDecapsulate(kemCiphertext, keys.my_kem_private, 'pqc_asymmetric_decrypt');
 
                     // Recreate the traditional shared secret
                     var traditionalSharedSecret = Nacl.box.before(keys.their_public, keys.my_private);
@@ -746,9 +1063,11 @@
             // Add ML-DSA signature if available
             if (keys.dsaPrivate && Crypto.PQC && Crypto.PQC.ml_dsa && Crypto.PQC.ml_dsa.ml_dsa44) {
                 try {
-                    var mlDsaSig = Crypto.PQC.ml_dsa.ml_dsa44.sign(keys.dsaPrivate, message);
-                    // Combine signatures: [naclSig][mlDsaSig]
-                    return u8_concat([naclSig, mlDsaSig]);
+                    var mlDsaSig = dsaSign(keys.dsaPrivate, message, 'pqc_sign_message');
+                    if (mlDsaSig) {
+                        // Combine signatures: [naclSig][mlDsaSig]
+                        return u8_concat([naclSig, mlDsaSig]);
+                    }
                 } catch (e) {
                     console.warn('ML-DSA signing failed, using only NaCl:', e);
                 }
@@ -779,8 +1098,7 @@
                         return null;
                     }
 
-                    // Verify ML-DSA signature
-                    var mlDsaValid = Crypto.PQC.ml_dsa.ml_dsa44.verify(validateKeys.dsaPublic, originalMessage, mlDsaSig);
+                    var mlDsaValid = dsaVerify(validateKeys.dsaPublic, originalMessage, mlDsaSig, 'pqc_verify_signature');
                     if (!mlDsaValid) {
                         return null;
                     }
@@ -813,7 +1131,7 @@
 
             // generate an ephemeral keypair or use the provided one
             var u8_ephemeral_keypair = keys.ephemeral_keypair || Nacl.box.keyPair();
-            var u8_ephemeral_kem_keypair = keys.ephemeral_kem_keypair || Crypto.PQC.ml_kem.ml_kem512.keygen();
+            var u8_ephemeral_kem_keypair = keys.ephemeral_kem_keypair || generateKemKeypair();
 
             // seal with an ephemeral key
             var u8_sealed = pqc_asymmetric_encrypt(u8_letter, {
@@ -1032,7 +1350,7 @@
             var u8_ephemeral_kem_keypair = null;
             if (Crypto.PQC && Crypto.PQC.ml_kem && Crypto.PQC.ml_kem.ml_kem512) {
                 try {
-                    u8_ephemeral_kem_keypair = Crypto.PQC.ml_kem.ml_kem512.keygen();
+                    u8_ephemeral_kem_keypair = generateKemKeypair();
                 } catch (err) {
                     console.error("[PQC] Failed to generate ephemeral KEM keypair:", err);
                 }
@@ -1064,7 +1382,7 @@
                     // using raw Uint8Array for signing due to bundling
                     const raw = getRawUint8Array(u8_outer);
                     const classical_sig = Nacl.sign(raw, keys.team_ed_private);
-                    const pq_sig = Crypto.PQC.ml_dsa.ml_dsa44.sign(keys.team_dsa_private, raw);
+                    const pq_sig = dsaSign(keys.team_dsa_private, raw);
                     return encodeBase64(u8_concat([classical_sig, pq_sig]));
                 } catch (err) {
                     console.error("[PQC] Failed to create hybrid team signature, falling back to classical:", err);
@@ -1105,7 +1423,7 @@
 
                     // Now verify the PQ signature
                     var pqSig = u8_slice(u8_bundle, u8_bundle.length - mlDsaSigLength);
-                    var pqVerified = Crypto.PQC.ml_dsa.ml_dsa44.verify(keys.team_dsa_public, u8_outer, pqSig);
+                    var pqVerified = dsaVerify(keys.team_dsa_public, u8_outer, pqSig);
                     if (!pqVerified) {
                         throw new Error("Post-quantum signature verification failed");
                     }
@@ -1242,7 +1560,7 @@
             if (Crypto.PQC && Crypto.PQC.ml_kem && Crypto.PQC.ml_kem.ml_kem512) {
                 try {
                     var kemSeed = Nacl.hash(u8_concat([stretched[0], u8_seed2]));
-                    teamKemPair = Crypto.PQC.ml_kem.ml_kem512.keygen(kemSeed);
+                    teamKemPair = generateKemKeypair(kemSeed);
                 } catch (err) {
                     console.error("Failed to generate post-quantum KEM keys for team:", err);
                     teamKemPair = null;
@@ -1266,14 +1584,21 @@
         };
 
         Team.deriveGuestKeys = function (seed2) {
-            return u8_deriveGuestKeys(decodeBase64(Crypto.b64AddSlashes(seed2)));
+            var start = (performance?.now?.() || Date.now());
+            var result = u8_deriveGuestKeys(decodeBase64(Crypto.b64AddSlashes(seed2)));
+            addTeamTime(start, 'Team.deriveGuestKeys');
+            return result;
         };
 
         Team.createSeed = function () {
-            return Crypto.b64AddSlashes(encodeBase64(Nacl.randomBytes(18)));
+            var start = (performance?.now?.() || Date.now());
+            var result = Crypto.b64AddSlashes(encodeBase64(Nacl.randomBytes(18)));
+            addTeamTime(start, 'Team.createSeed');
+            return result;
         };
 
         Team.deriveMemberKeys = function (seed1, myKeys) {
+            var start = (performance?.now?.() || Date.now());
             var u8_seed1;
             try {
                 u8_seed1 = decodeBase64(Crypto.b64AddSlashes(seed1));
@@ -1281,58 +1606,37 @@
             } catch (err) {
                 throw err;
             }
-
-            // my_keys => {myCurvePublic, myCurvePrivate}
             if (!team_validate_own_keys(myKeys)) { throw new Error('INVALID_OWN_KEYS'); }
-
             var stretched = u8_stretch(u8_seed1);
-
-            // team_ed_private, team_ed_public (distributed via historyKeeper)
             var teamEd = Nacl.sign.keyPair.fromSeed(stretched[0]);
-
-            // Generate PQ signing keys if available
             var teamDsaPair = null;
             if (Crypto.PQC && Crypto.PQC.ml_dsa && Crypto.PQC.ml_dsa.ml_dsa44) {
                 try {
                     var dsaSeed = Nacl.hash(u8_concat([stretched[0], u8_seed1])).subarray(0, 32);
-                    teamDsaPair = Crypto.PQC.ml_dsa.ml_dsa44.internal.keygen(dsaSeed);
+                    teamDsaPair = generateDsaKeypair(dsaSeed);
                 } catch (err) {
                     console.error("Failed to generate post-quantum DSA keys for team:", err);
                     teamDsaPair = null;
                 }
             }
-
-            // channel, team_curve_private, team_curve_public
             var guestKeys = u8_deriveGuestKeys(stretched[1]);
-
             var result = merge({
-                // your keys myCurvePublic, myCurvePrivate
                 myCurvePublic: myKeys.curvePublic,
                 myCurvePrivate: myKeys.curvePrivate,
-                // member keys (teamEdPrivate, teamEdPublic)
                 teamEdPrivate: encodeBase64(teamEd.secretKey),
                 teamEdPublic: encodeBase64(teamEd.publicKey),
-                // optional PQC keys
                 myKemPublic: myKeys.kemPublic,
                 myKemPrivate: myKeys.kemPrivate,
-                // team PQC keys
                 teamDsaPrivate: encodeBase64(teamDsaPair?.secretKey),
                 teamDsaPublic: encodeBase64(teamDsaPair?.publicKey),
-            }, guestKeys); // guest keys & info (channel, teamCurvePrivate, teamCurvePublic)
-
-
+            }, guestKeys);
+            addTeamTime(start, 'Team.deriveMemberKeys');
             return result;
         };
 
-        // returns an object
-        // any of: {encrypt}, {decrypt}, {encrypt, decrypt}
-        // throws if it is impossible to correctly create either method
-        // encrypt and decrypt take strings as input
-        // both log and return null in the event of internal errors
-        // decrypt can optionally skip validation if you trust the source of the message
         Team.createEncryptor = function (keys) {
+            var start = (performance?.now?.() || Date.now());
             var u8_keys = {};
-            // Process keys
             Object.keys(team_key_map).forEach(function (k) {
                 if (!keys[k]) { return; }
                 try {
@@ -1342,37 +1646,54 @@
                     throw new Error('INVALID_KEY_SUPPLIED');
                 }
             });
-
             var out = {};
-
             if (team_can_encrypt(u8_keys)) {
-                // (utf8_string) => base64_string || null
                 out.encrypt = function (plain) {
+                    var opStart = (performance?.now?.() || Date.now());
                     try {
-                        return encryptForTeam(plain, u8_keys);
+                        var res = encryptForTeam(plain, u8_keys);
+                        addTeamTime(opStart, 'Team.createEncryptor.encrypt');
+                        return res;
                     } catch (e) {
                         console.error(e);
+                        addTeamTime(opStart, 'Team.createEncryptor.encrypt');
                         return null;
                     }
                 };
             }
-
             if (team_can_decrypt(u8_keys)) {
-                // (base64_string, skip_validation_bool) => {content: utf8_string, author: base64_string} || null
                 out.decrypt = function (cipher, skipValidation) {
+                    var opStart = (performance?.now?.() || Date.now());
                     try {
-                        return decryptForTeam(cipher, u8_keys, skipValidation);
+                        var res = decryptForTeam(cipher, u8_keys, skipValidation);
+                        addTeamTime(opStart, 'Team.createEncryptor.decrypt');
+                        return res;
                     } catch (e) {
                         console.error(e);
+                        addTeamTime(opStart, 'Team.createEncryptor.decrypt');
                         return null;
                     }
                 };
             }
-
             if (Object.keys(out).length === 0) { throw new Error("INVALID_TEAM_CONFIGURATION"); }
-
+            addTeamTime(start, 'Team.createEncryptor');
             return out;
         };
+
+        // --- Team operation timing ---
+        var teamOperationTimes = [];
+        var teamCumulativeTimeMs = 0;
+        function addTeamTime(start, fnName) {
+            const now = (performance?.now?.() || Date.now());
+            const deltaMs = now - start;
+            teamCumulativeTimeMs += deltaMs;
+            teamOperationTimes.push({ fnName, deltaMs });
+            const deltaSec = (deltaMs / 1000).toFixed(4);
+            const totalSec = (teamCumulativeTimeMs / 1000).toFixed(4);
+            console.log(`[Team timing] ${fnName}: +${deltaSec}s, cumulative: ${totalSec}s`);
+            console.log('[Team timing] Operation times:', teamOperationTimes);
+        };
+        // --- End Team operation timing ---
 
         return Crypto;
     };
@@ -1392,3 +1713,4 @@
         window.chainpad_crypto = factory(window.nacl, window.PostQuantum, window.scrypt);
     }
 }());
+
