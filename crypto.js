@@ -480,31 +480,68 @@
 
                 if (input.signKey) {
                     var signKey = decodeBase64(input.signKey);
+                    var dsaPrivate = input.dsaPrivate ? decodeBase64(input.dsaPrivate) : null;
+                    var dsaPublic = input.dsaPublic ? decodeBase64(input.dsaPublic) : null;
+                    var hasPQC = Crypto.PQC?.ml_dsa?.ml_dsa44;
+                    var hybridSigLength = 64 + 2420;
+
                     out.encrypt = function (msg) {
-                        return encodeBase64(Nacl.sign(decodeUTF8(encrypt(msg, key)), signKey));
+                        var encryptedMsg = decodeUTF8(encrypt(msg, key));
+
+                        if (dsaPrivate && hasPQC) {
+                            try {
+                                var dsaSignature = Crypto.CryptoAgility.dsaSign(dsaPrivate, encryptedMsg);
+                                var naclSigned = Nacl.sign(encryptedMsg, signKey);
+                                return encodeBase64(u8_concat([
+                                    naclSigned.subarray(0, 64),
+                                    dsaSignature,
+                                    encryptedMsg
+                                ]));
+                            } catch (err) {
+                                console.warn("PQC signature failed, using classical:", err);
+                            }
+                        }
+
+                        return encodeBase64(Nacl.sign(encryptedMsg, signKey));
                     };
                 }
 
                 out.decrypt = function (msg, validateKey, skipCheck) {
                     if (!validateKey && !skipCheck) {
                         throw new Error("UNSUPPORTED_DECRYPTION_CONFIGURATION");
-                        //return decrypt(msg, key);
                     }
 
-                    if (validateKey === true && !skipCheck) {
-                        console.error("UNEXPECTED_CONFIGURATION");
+                    var signedMessage = decodeBase64(msg);
+                    var validated;
+                    var hasHybrid = signedMessage.length >= hybridSigLength && dsaPublic && hasPQC;
+
+                    if (skipCheck || typeof validateKey !== "string") {
+                        validated = signedMessage.subarray(hasHybrid ? hybridSigLength : 64);
+                    } else {
+                        if (hasHybrid) {
+                            try {
+                                var naclSig = signedMessage.subarray(0, 64);
+                                var dsaSig = signedMessage.subarray(64, hybridSigLength);
+                                var message = signedMessage.subarray(hybridSigLength);
+
+                                if (!Crypto.CryptoAgility.dsaVerify(dsaPublic, message, dsaSig)) {
+                                    return null;
+                                }
+                                validated = Nacl.sign.open(u8_concat([naclSig, message]), decodeBase64(validateKey));
+                            } catch (err) {
+                                return null;
+                            }
+                        } else {
+                            validated = Nacl.sign.open(signedMessage, decodeBase64(validateKey));
+                        }
                     }
 
-                    // .subarray(64) remove the signature since it's taking lots of time and it's already checked server-side.
-                    // We only need to check when the message is not coming from history keeper
-                    var validated = (skipCheck || typeof validateKey !== "string")
-                        ? decodeBase64(msg).subarray(64)
-                        : Nacl.sign.open(decodeBase64(msg), decodeBase64(validateKey));
-                    if (!validated) { return; }
+                    if (!validated) { return null; }
                     return decrypt(encodeUTF8(validated), key);
                 };
                 return out;
             }
+
             key = parseKey(input).cryptKey;
             return {
                 encrypt: function (msg) {
@@ -820,26 +857,42 @@
             try {
                 const pub = decodeBase64(theirs);
                 const secret = decodeBase64(mine);
-                const theirKemPub = decodeBase64(theirsKem);
 
+                // Classical Curve25519 shared secret
                 const sharedSecret = Nacl.box.before(pub, secret);
+                let combinedShared = sharedSecret;
 
-                if (theirKemPub.length !== 800) {
-                    throw new Error("Invalid KEM public key length: expected 800 bytes");
-                }
+                // TODO: Integrate PQC key exchange when available
+                // This should be replaced with a proper post-quantum key agreement protocol when available
+                // that can derive the same shared secret on both sides without communication
+                /*if (theirsKem && mineKem && Crypto.PQC?.ml_kem?.ml_kem512) {
+                    try {
+                        const theirKemPub = decodeBase64(theirsKem);
+                        const myKemSecret = decodeBase64(mineKem);
 
-                const kemResult = kemEncapsulate(theirKemPub);
-                const kemSharedSecret = kemResult.sharedSecret;
+                        const kemSeed = Nacl.hash(u8_concat([
+                            sharedSecret,        // Classical shared secret as entropy
+                            pub,                 // Their classical public key
+                            secret.subarray(0, 32), // My classical private key (first 32 bytes)
+                            theirKemPub,         // Their KEM public key
+                            myKemSecret.subarray(0, 32) // My KEM secret key (first 32 bytes)
+                        ]));
 
+                        // Derive a 32-byte KEM contribution
+                        const kemContribution = Nacl.hash(kemSeed).subarray(0, 32);
 
-                const symmetricKey = deriveSymmetricKey(sharedSecret, kemSharedSecret);
-
+                        // Combine classical and post-quantum contributions
+                        combinedShared = u8_concat([sharedSecret, kemContribution]);
+                    } catch (err) {
+                        console.warn("PQC key exchange failed, using classical-only:", err);
+                    }
+                } */
 
                 const salt = decodeUTF8('CryptPad.signingKeyGenerationSalt');
-                const hash = Nacl.hash(u8_concat([salt, symmetricKey])); // 64B
+                const hash = Nacl.hash(u8_concat([salt, combinedShared]));
 
                 const signKp = Nacl.sign.keyPair.fromSeed(hash.subarray(0, 32));
-                const cryptKey = hash.subarray(32, 64); // 32B
+                const cryptKey = hash.subarray(32, 64);
 
                 const result = {
                     cryptKey: encodeBase64(cryptKey),
@@ -847,21 +900,23 @@
                     validateKey: encodeBase64(signKp.publicKey),
                 };
 
+                // Generate PQC DSA signature keys if available
                 if (Crypto.PQC?.ml_dsa?.ml_dsa44) {
                     try {
                         const pqcSalt = decodeUTF8('CryptPad.curve.pqcSalt');
-                        const pqcSeed = Nacl.hash(u8_concat([symmetricKey, pqcSalt])).subarray(0, 32);
-                        const dsaPair = generateDsaKeypair(pqcSeed);
+                        const pqcSeed = Nacl.hash(u8_concat([combinedShared, pqcSalt])).subarray(0, 32);
+                        const dsaPair = generateDsaKeypair(pqcSeed, 'deriveKeys');
 
-                        result.dsaPrivate = encodeBase64(dsaPair.secretKey);
-                        result.dsaPublic = encodeBase64(dsaPair.publicKey);
+                        if (dsaPair) {
+                            result.dsaPrivate = encodeBase64(dsaPair.secretKey);
+                            result.dsaPublic = encodeBase64(dsaPair.publicKey);
+                        }
                     } catch (err) {
                         console.error("Failed to generate PQC signature keys:", err);
                     }
                 }
 
                 return result;
-
             } catch (e) {
                 console.error("Failed to derive keys:", e);
                 return null;
