@@ -473,36 +473,39 @@
         */
         Crypto.createEncryptor = function (input) {
             var key;
+
             if (typeof input === 'object') {
                 var out = {};
                 key = input.cryptKey;
                 if (!key) { throw new Error("NO_DECRYPTION_KEY_PROVIDED"); }
 
-                if (input.signKey) {
-                    var signKey = decodeBase64(input.signKey);
-                    var dsaPrivate = input.dsaPrivate ? decodeBase64(input.dsaPrivate) : null;
-                    var dsaPublic = input.dsaPublic ? decodeBase64(input.dsaPublic) : null;
-                    var hasPQC = Crypto.PQC?.ml_dsa?.ml_dsa44;
-                    var hybridSigLength = 64 + 2420;
+                var hasSignKey = Boolean(input.signKey);
+                var signKey = hasSignKey ? decodeBase64(input.signKey) : null;
 
+                var dsaPrivate = input.dsaPrivate ? decodeBase64(input.dsaPrivate) : null;
+                var dsaPublic  = input.dsaPublic  ? decodeBase64(input.dsaPublic)  : null;
+                var hasPQCImpl = Boolean(Crypto.PQC?.ml_dsa?.ml_dsa44)
+                    && typeof Crypto.CryptoAgility?.dsaSign === "function"
+                    && typeof Crypto.CryptoAgility?.dsaVerify === "function";
+
+                var DSA_SIG_LEN = 2420;
+
+                if (hasSignKey) {
                     out.encrypt = function (msg) {
-                        var encryptedMsg = decodeUTF8(encrypt(msg, key));
-
-                        if (dsaPrivate && hasPQC) {
+                        var cipherStr = encrypt(msg, key);
+                        var cipherBytes = decodeUTF8(cipherStr);
+                        var naclSigned = Nacl.sign(cipherBytes, signKey);
+                        if (hasPQCImpl && dsaPrivate) {
                             try {
-                                var dsaSignature = Crypto.CryptoAgility.dsaSign(dsaPrivate, encryptedMsg);
-                                var naclSigned = Nacl.sign(encryptedMsg, signKey);
-                                return encodeBase64(u8_concat([
-                                    naclSigned.subarray(0, 64),
-                                    dsaSignature,
-                                    encryptedMsg
-                                ]));
+                                var dsaSignature = Crypto.CryptoAgility.dsaSign(dsaPrivate, cipherBytes);
+                                if (dsaSignature && dsaSignature.length === DSA_SIG_LEN) {
+                                    return encodeBase64(u8_concat([ dsaSignature, naclSigned ]));
+                                }
                             } catch (err) {
-                                console.warn("PQC signature failed, using classical:", err);
+                                console.warn("PQC (ML-DSA) signing failed, falling back to classical:", err);
                             }
                         }
-
-                        return encodeBase64(Nacl.sign(encryptedMsg, signKey));
+                        return encodeBase64(naclSigned);
                     };
                 }
 
@@ -510,35 +513,43 @@
                     if (!validateKey && !skipCheck) {
                         throw new Error("UNSUPPORTED_DECRYPTION_CONFIGURATION");
                     }
+                    if (validateKey === true && !skipCheck) {
+                        console.error("UNEXPECTED_CONFIGURATION");
+                    }
 
                     var signedMessage = decodeBase64(msg);
-                    var validated;
-                    var hasHybrid = signedMessage.length >= hybridSigLength && dsaPublic && hasPQC;
+                    var isHybridByLength = signedMessage.length >= (DSA_SIG_LEN + 64 + 1);
+                    var validatedBytes = null;
 
                     if (skipCheck || typeof validateKey !== "string") {
-                        validated = signedMessage.subarray(hasHybrid ? hybridSigLength : 64);
+                        var offset = isHybridByLength ? (DSA_SIG_LEN + 64) : 64;
+                        if (signedMessage.length < offset) { return; }
+                        validatedBytes = signedMessage.subarray(offset);
                     } else {
-                        if (hasHybrid) {
-                            try {
-                                var naclSig = signedMessage.subarray(0, 64);
-                                var dsaSig = signedMessage.subarray(64, hybridSigLength);
-                                var message = signedMessage.subarray(hybridSigLength);
-
-                                if (!Crypto.CryptoAgility.dsaVerify(dsaPublic, message, dsaSig)) {
-                                    return null;
+                        if (isHybridByLength) {
+                            var dsaSig = signedMessage.subarray(0, DSA_SIG_LEN);
+                            var naclSignedMessage = signedMessage.subarray(DSA_SIG_LEN);
+                            validatedBytes = Nacl.sign.open(naclSignedMessage, decodeBase64(validateKey));
+                            if (!validatedBytes) { return; }
+                            if (hasPQCImpl && dsaPublic) {
+                                try {
+                                    var ok = Crypto.CryptoAgility.dsaVerify(dsaPublic, validatedBytes, dsaSig);
+                                    if (!ok) { return; }
+                                } catch (err) {
+                                    console.warn("Hybrid ML-DSA verification failed:", err);
+                                    return;
                                 }
-                                validated = Nacl.sign.open(u8_concat([naclSig, message]), decodeBase64(validateKey));
-                            } catch (err) {
-                                return null;
                             }
                         } else {
-                            validated = Nacl.sign.open(signedMessage, decodeBase64(validateKey));
+                            validatedBytes = Nacl.sign.open(signedMessage, decodeBase64(validateKey));
+                            if (!validatedBytes) { return; }
                         }
                     }
 
-                    if (!validated) { return null; }
-                    return decrypt(encodeUTF8(validated), key);
+                    var cipherStr = encodeUTF8(validatedBytes);
+                    return decrypt(cipherStr, key);
                 };
+
                 return out;
             }
 
@@ -599,8 +610,8 @@
                     viewKeyStr: cryptKeyStr
                 };
 
-                // Add PQC keys if available
-                var kemPair = generateKemKeypair(cryptKey, 'createViewCryptor');
+                // Add PQC keys if available - use cryptKeyStr directly for consistent seeding
+                var kemPair = generateKemKeypair(decodeUTF8(cryptKeyStr), 'createViewCryptor');
                 result = addKemKeysToResult(result, kemPair);
 
                 return result;
@@ -886,7 +897,7 @@
                     } catch (err) {
                         console.warn("PQC key exchange failed, using classical-only:", err);
                     }
-                } */
+                }*/
 
                 const salt = decodeUTF8('CryptPad.signingKeyGenerationSalt');
                 const hash = Nacl.hash(u8_concat([salt, combinedShared]));
